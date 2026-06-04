@@ -26,6 +26,7 @@ import { loadDocuments, normalizeDocumentExtensions } from './documents';
 import { buildKeywordStats } from '../query/keyword';
 import {
   clearIntermediateCache,
+  loadVectorStore,
   readEmbeddingCache,
   readVectorStoreMeta,
   writeVectorStore,
@@ -220,6 +221,8 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
   const resolved = resolveIngestOptions(options);
   const config = resolved.embeddingConfig;
 
+  await clearIntermediateCache(resolved.intermediateDir);
+
   const docs = await loadDocuments(resolved.documentsDir, {
     extensions: resolved.documentExtensions,
     sourceRoot: resolved.sourceRoot,
@@ -272,6 +275,12 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
     ingestFingerprint,
   );
   if (unchangedMeta) {
+    if (resolved.intermediateDir) {
+      await loadVectorStore(config, {
+        vectorStore: resolved.vectorStore,
+        intermediateDir: resolved.intermediateDir,
+      });
+    }
     return {
       embeddingConfig: config,
       documentsDir: resolved.documentsDir,
@@ -284,8 +293,6 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
       skippedReason: 'unchanged',
     };
   }
-
-  await clearIntermediateCache(resolved.intermediateDir);
 
   // Chunks that hit the cache reuse the old vectors directly; the rest are embedded in batches
   const cache = await readEmbeddingCache(config, resolved.vectorStore, resolved.intermediateDir);

@@ -1,0 +1,142 @@
+:root {
+  --sl-color-accent-low: #d8f2e5;
+  --sl-color-accent: #0f8b5f;
+  --sl-color-accent-high: #063d2f;
+  --sl-color-white: #fbfffd;
+  --sl-color-gray-1: #eef7f3;
+  --sl-color-gray-2: #c9d9d2;
+  --sl-color-gray-3: #93aaa0;
+  --sl-color-gray-4: #536a61;
+  --sl-color-gray-5: #31443d;
+  --sl-color-gray-6: #1f2d28;
+  --sl-color-black: #101816;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #dff5e9;
+  --sl-color-accent: #0d7f57;
+  --sl-color-accent-high: #07503b;
+  --sl-color-white: #111a17;
+  --sl-color-gray-1: #23352f;
+  --sl-color-gray-2: #415a50;
+  --sl-color-gray-3: #687f75;
+  --sl-color-gray-4: #9fb3aa;
+  --sl-color-gray-5: #d9e8e2;
+  --sl-color-gray-6: #eff7f4;
+  --sl-color-gray-7: #f8fcfa;
+  --sl-color-black: #ffffff;
+}
+
+.hero img {
+  filter: drop-shadow(0 24px 60px rgb(15 139 95 / 20%));
+}
+
+.hero .hero-html {
+  width: min(100%, 24rem);
+}
+
+.hero-flow {
+  display: grid;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--sl-color-accent), transparent 35%);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--sl-color-accent-low), transparent 35%), transparent 58%),
+    color-mix(in srgb, var(--sl-color-gray-6), transparent 18%);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 22%);
+}
+
+.hero-flow__row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.hero-flow__row--wide {
+  grid-template-columns: 1fr 1fr;
+}
+
+.hero-flow span {
+  display: grid;
+  min-height: 4.25rem;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--sl-color-gray-4), transparent 25%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sl-color-black), transparent 24%);
+  color: var(--sl-color-white);
+  font-size: var(--sl-text-sm);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.sl-markdown-content .pipeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+  margin-block: 1.25rem;
+}
+
+.sl-markdown-content .pipeline span {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 8px;
+  padding: 0.85rem 0.9rem;
+  background: color-mix(in srgb, var(--sl-color-accent-low), transparent 55%);
+  font-weight: 650;
+  text-align: center;
+}
+
+.sl-markdown-content .source-map {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.85rem;
+  margin-block: 1.25rem;
+}
+
+.sl-markdown-content .source-map > :is(div, a) {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 8px;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--sl-color-gray-6), transparent 72%);
+}
+
+.sl-markdown-content .source-map > a {
+  color: var(--sl-color-gray-2);
+  text-decoration: none;
+}
+
+.sl-markdown-content .source-map > a:hover {
+  border-color: var(--sl-color-accent);
+  background: color-mix(in srgb, var(--sl-color-accent-low), transparent 62%);
+}
+
+.sl-markdown-content .source-map strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--sl-color-white);
+}
+
+.sl-markdown-content .source-map span {
+  display: block;
+}
+
+.sl-markdown-content .landing-map {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+}
+
+.sl-markdown-content .landing-pipeline {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
+}
+
+:root[data-theme='light'] .hero-flow {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--sl-color-accent-low), transparent 30%), transparent 58%),
+    color-mix(in srgb, var(--sl-color-gray-7), transparent 8%);
+  box-shadow: 0 24px 64px rgb(15 80 59 / 12%);
+}
+
+:root[data-theme='light'] .hero-flow span {
+  background: color-mix(in srgb, var(--sl-color-black), transparent 4%);
+}
