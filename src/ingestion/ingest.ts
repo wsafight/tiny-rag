@@ -354,7 +354,8 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
     createdAt: new Date().toISOString(),
   };
 
-  await writeVectorStore(meta, records, resolved.vectorStore, {
+  const storedRecords = records.map(({ embeddingText: _embeddingText, ...rest }) => rest);
+  await writeVectorStore(meta, storedRecords, resolved.vectorStore, {
     intermediateDir: resolved.intermediateDir,
   });
   resolved.onProgress?.({

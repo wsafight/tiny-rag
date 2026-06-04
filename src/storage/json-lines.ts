@@ -17,7 +17,11 @@ export async function* readJsonLines(file: string): AsyncGenerator<JsonLine> {
     for await (const line of rl) {
       if (!line) continue;
       lineNumber += 1;
-      yield { lineNumber, value: JSON.parse(line) as unknown };
+      try {
+        yield { lineNumber, value: JSON.parse(line) as unknown };
+      } catch {
+        throw new Error(`第 ${lineNumber} 行不是合法 JSON`);
+      }
     }
   } finally {
     rl.close();

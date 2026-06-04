@@ -3,9 +3,6 @@
 import 'dotenv/config';
 import http from 'node:http';
 import {
-  DEFAULT_VECTOR_STORE,
-} from './src/constants/index';
-import {
   createChat,
   createEmbedder,
   type ProviderRuntimeOptions,
@@ -26,7 +23,12 @@ import {
   envNumber as readEnvNumber,
   envString as readEnvString,
 } from './runtime/env';
-import { fail, invariant } from './src/utils/index';
+
+class HttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
 import type { EnvNumberOptions, EnvSource } from './runtime/env';
 import type {
   EmbeddingConfig,
@@ -165,6 +167,16 @@ const searchDefaults = getSearchDefaults();
 const embed = createEmbedder(embeddingConfig, runtimeOptions);
 const chat = createChat(llmConfig, runtimeOptions);
 
+const authToken = envString('SERVE_AUTH_TOKEN');
+const maxConcurrency = envInteger('SERVE_MAX_CONCURRENCY', 4, { min: 1 });
+let inFlight = 0;
+
+function requireAuth(req: http.IncomingMessage): void {
+  if (!authToken) return;
+  const header = req.headers.authorization ?? '';
+  if (header !== `Bearer ${authToken}`) throw new HttpError(401, 'unauthorized');
+}
+
 let retriever: VectorStoreRetriever;
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -183,11 +195,15 @@ async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.length;
-    invariant(total > limit, '请求体超过 1MB');
+    if (total > limit) throw new HttpError(413, '请求体超过 1MB');
     chunks.push(buffer);
   }
   const raw = Buffer.concat(chunks).toString('utf-8').trim();
-  return raw ? JSON.parse(raw) : {};
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new HttpError(400, '请求体不是合法 JSON');
+  }
 }
 
 function pickRequestSearchOptions(body: QueryRequestBody): SearchOptions {
@@ -237,7 +253,7 @@ async function reloadRetriever(): Promise<VectorStoreRetriever> {
 async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = (await readJsonBody(req)) as QueryRequestBody;
   if (typeof body.question !== 'string' || body.question.trim() === '') {
-    fail('question 必须是非空字符串');
+    throw new HttpError(400, 'question 必须是非空字符串');
   }
   const question = body.question;
 
@@ -263,7 +279,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (req.method === 'GET' && url.pathname === '/health') {
       json(res, 200, {
         ok: true,
-        vectorStore: searchDefaults.vectorStore || DEFAULT_VECTOR_STORE,
+        vectorStore: searchDefaults.vectorStore,
         records: retriever.recordCount,
         embedding: `${embeddingConfig.provider}/${embeddingConfig.model}`,
         llm: `${llmConfig.provider}/${llmConfig.model}`,
@@ -271,10 +287,18 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       return;
     }
     if (req.method === 'POST' && url.pathname === '/query') {
-      await handleQuery(req, res);
+      requireAuth(req);
+      if (inFlight >= maxConcurrency) throw new HttpError(503, '服务繁忙，请稍后重试');
+      inFlight += 1;
+      try {
+        await handleQuery(req, res);
+      } finally {
+        inFlight -= 1;
+      }
       return;
     }
     if (req.method === 'POST' && url.pathname === '/reload') {
+      requireAuth(req);
       const loaded = await reloadRetriever();
       json(res, 200, { ok: true, records: loaded.recordCount, meta: loaded.meta });
       return;
@@ -284,9 +308,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       endpoints: ['GET /health', 'POST /query', 'POST /reload'],
     });
   } catch (err) {
-    json(res, 500, {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.message });
+      return;
+    }
+    console.error('[serve] 请求处理失败', err);
+    json(res, 500, { error: 'internal_error' });
   }
 }
 
@@ -302,4 +329,8 @@ const server = http.createServer((req, res) => {
 server.listen(port, host, () => {
   console.log(`[serve] listening on http://${host}:${port}`);
   console.log(`[serve] loaded ${retriever.recordCount} records from ${searchDefaults.vectorStore}`);
+  console.log(`[serve] auth ${authToken ? 'enabled' : 'disabled'}, max concurrency ${maxConcurrency}`);
+  if (!authToken) {
+    console.warn('[serve] 未设置 SERVE_AUTH_TOKEN，/query 与 /reload 无鉴权，请勿暴露到公网');
+  }
 });

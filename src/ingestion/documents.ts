@@ -31,16 +31,16 @@ async function listDocumentFilesFromDirectory(
   const entries = (await fs.readdir(dir, { withFileTypes: true })).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-  const files: string[] = [];
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await listDocumentFilesFromDirectory(fullPath, extensions)));
-    } else if (extensions.has(path.extname(entry.name).toLowerCase())) {
-      files.push(fullPath);
-    }
-  }
-  return files;
+  const parts = await Promise.all(
+    entries.map((entry) => {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        return listDocumentFilesFromDirectory(fullPath, extensions);
+      }
+      return extensions.has(path.extname(entry.name).toLowerCase()) ? [fullPath] : [];
+    }),
+  );
+  return parts.flat();
 }
 
 export async function loadDocuments(
