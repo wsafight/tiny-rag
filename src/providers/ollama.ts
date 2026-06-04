@@ -1,0 +1,119 @@
+import { fetchWithRetry, readLines } from './http';
+import { fail, runWithConcurrency } from '../utils/index';
+import type { ChatMessage, ChatOptions, ModelConfig } from './types';
+import type { ResolvedProviderRuntimeOptions } from './runtime';
+
+export type OllamaConfig = Pick<ModelConfig, 'baseURL' | 'model'>;
+
+interface OllamaEmbeddingResponse {
+  embedding: unknown;
+}
+
+interface OllamaChatResponse {
+  content: string;
+}
+
+interface OllamaStreamChunk {
+  message?: {
+    content?: string;
+  };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readOllamaEmbeddingResponse(value: unknown): OllamaEmbeddingResponse {
+  if (!isObject(value) || !('embedding' in value)) {
+    fail('Ollama embedding 返回缺少 embedding 字段');
+  }
+  return { embedding: value.embedding };
+}
+
+function readOllamaChatResponse(value: unknown): OllamaChatResponse {
+  if (!isObject(value) || !isObject(value.message)) {
+    fail('Ollama chat 返回缺少 message 对象');
+  }
+  const content = value.message.content;
+  if (typeof content !== 'string') {
+    fail('Ollama chat 返回缺少 message.content');
+  }
+  return { content };
+}
+
+function tryReadOllamaStreamChunk(line: string): OllamaStreamChunk | undefined {
+  try {
+    const value = JSON.parse(line) as unknown;
+    return isObject(value) ? (value as OllamaStreamChunk) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function embedOllama(
+  config: OllamaConfig,
+  inputs: readonly string[],
+  options: ResolvedProviderRuntimeOptions,
+): Promise<unknown[]> {
+  const tasks = inputs.map((text) => async () => {
+    const response = await fetchWithRetry(
+      `${config.baseURL}/api/embeddings`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: config.model, prompt: text }),
+      },
+      'Ollama embedding',
+      options,
+    );
+    if (!response.ok) {
+      const errText = await response.text();
+      fail(`Ollama embedding 请求失败: ${response.status} ${errText}`);
+    }
+    return readOllamaEmbeddingResponse(await response.json()).embedding;
+  });
+  return runWithConcurrency(tasks, options.ollamaEmbedConcurrency);
+}
+
+export async function chatOllama(
+  config: OllamaConfig,
+  messages: readonly ChatMessage[],
+  opts: ChatOptions = {},
+  options: ResolvedProviderRuntimeOptions,
+): Promise<string> {
+  const stream = typeof opts.onToken === 'function';
+  const response = await fetchWithRetry(
+    `${config.baseURL}/api/chat`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        stream,
+        options: { temperature: options.llmTemperature },
+      }),
+    },
+    'Ollama chat',
+    options,
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    fail(`Ollama chat 请求失败: ${response.status} ${text}`);
+  }
+
+  if (!stream) {
+    return readOllamaChatResponse(await response.json()).content;
+  }
+
+  let full = '';
+  await readLines(response.body, (line) => {
+    const json = tryReadOllamaStreamChunk(line);
+    const token = json?.message?.content ?? '';
+    if (token) {
+      full += token;
+      opts.onToken?.(token);
+    }
+  });
+  return full;
+}

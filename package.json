@@ -1,0 +1,44 @@
+{
+  "name": "tiny-rag",
+  "version": "0.1.0",
+  "description": "Tiny RAG: 用 Node.js 搭一个最小可理解的 RAG，支持 LM Studio / Ollama / OpenAI 等多个环境",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rslib build",
+    "typecheck": "tsc --noEmit",
+    "ingest": "node --import tsx cli.ts ingest",
+    "query": "node --import tsx cli.ts query",
+    "cli": "node --import tsx cli.ts",
+    "serve": "node --import tsx serve.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@rslib/core": "^0.22.0",
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
