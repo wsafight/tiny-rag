@@ -6,7 +6,7 @@ export default defineConfig({
   base: '/tiny-rag',
   integrations: [
     starlight({
-      title: 'RAG 是怎样工作的',
+      title: 'RAG 如何工作',
       description: '从零实现 mini-rag，理解 RAG 如何完成文档导入、语义切块、向量库、混合检索、Prompt 问答、CLI 和 HTTP 服务，再对照 tiny-rag 源码看工程取舍。',
       locales: {
         root: {
@@ -32,6 +32,7 @@ export default defineConfig({
           items: [
             { label: 'RAG 项目概览', slug: 'overview' },
             { label: '工作流与源码架构', slug: 'architecture' },
+            { label: '核心术语速查', slug: 'glossary' },
           ],
         },
         {
@@ -46,13 +47,13 @@ export default defineConfig({
             { label: 'B07: 纯向量检索与 TopK', slug: 'build-07-retrieval' },
             { label: 'B08: 关键词分词与 BM25', slug: 'build-08-keyword-bm25' },
             { label: 'B09: 混合检索与同源去重', slug: 'build-09-hybrid' },
-            { label: 'B10: Prompt 与问答编排', slug: 'build-10-prompt-query' },
+            { label: 'B10: Prompt 与端到端问答', slug: 'build-10-prompt-query' },
           ],
         },
         {
           label: '工程化接入',
           items: [
-            { label: 'CLI / HTTP / 库 API', slug: 'interfaces' },
+            { label: '三种入口：CLI / HTTP / 库 API', slug: 'interfaces' },
             { label: '配置与检索调参', slug: 'config-tuning' },
           ],
         },
