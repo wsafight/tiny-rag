@@ -1,18 +1,19 @@
 // ingest.ts
 // -----------------------------------------------------------------------------
-// 文档导入库：把文档目录下的文本文件转成本地向量库。
+// Document ingestion library: turns text files under the documents directory into a local vector store.
 //
-// 当前功能：
-//   1) 递归读取 documentsDir 下的受支持文档；
-//   2) 语义切块：先按 Markdown 标题分节，再按空行段落聚合到 chunkSize 以内，
-//      段落自身仍超长时按字符数硬切，并保留 CHUNK_OVERLAP 字符的重叠；
-//   3) 每个 chunk 携带所属的多级标题路径（heading）以及内容 SHA1（hash）；
-//   4) 基于 hash 的增量缓存：复用旧向量库中相同 hash 的 embedding，未命中
-//      的部分才调用 embedding 接口；
-//   5) 写盘前对所有向量做 L2 归一化；
-//   6) 输出格式为 NDJSON：第一行是 _meta（version/provider/model/dim/...）
-//      其余每行一条 chunk 记录；先写临时文件再 rename，保证原子替换。
-// 本文件只导出可复用函数；CLI 负责读取环境变量和打印进度。
+// Current features:
+//   1) Recursively read supported documents under documentsDir;
+//   2) Semantic chunking: split by Markdown headings first, then aggregate paragraphs by
+//      blank lines up to chunkSize; when a paragraph itself is too long, hard-split it by
+//      character count, keeping CHUNK_OVERLAP characters of overlap;
+//   3) Each chunk carries its multi-level heading path (heading) and content SHA1 (hash);
+//   4) Hash-based incremental cache: reuse embeddings with the same hash from the old vector
+//      store, only calling the embedding API for the misses;
+//   5) L2-normalize all vectors before writing to disk;
+//   6) Output format is NDJSON: the first line is _meta (version/provider/model/dim/...)
+//      and every other line is one chunk record; write to a temp file then rename for atomic replacement.
+// This file only exports reusable functions; the CLI handles reading env vars and printing progress.
 // -----------------------------------------------------------------------------
 
 import {
@@ -174,7 +175,7 @@ function resolveIngestOptions(options: IngestOptions): ResolvedIngestOptions {
 }
 
 /**
- * 将文档列表切块，生成带 source / heading / hash 等元信息的 chunk 数组。
+ * Chunk a list of documents into chunk records carrying source / heading / hash metadata.
  */
 export function buildChunkRecords(
   docs: readonly SourceDocument[],
@@ -213,7 +214,7 @@ export function buildChunkRecords(
 }
 
 /**
- * 加载 -> 切块 -> 命中缓存 -> 仅对未命中的 chunk 调用 embedding -> 归一化 -> 写盘。
+ * Load -> chunk -> hit cache -> embed only the misses -> normalize -> write to disk.
  */
 export async function ingest(options: IngestOptions): Promise<IngestResult> {
   const resolved = resolveIngestOptions(options);
@@ -286,7 +287,7 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
 
   await clearIntermediateCache(resolved.intermediateDir);
 
-  // 命中缓存的 chunk 直接复用旧向量；剩下的再分批请求 embedding
+  // Chunks that hit the cache reuse the old vectors directly; the rest are embedded in batches
   const cache = await readEmbeddingCache(config, resolved.vectorStore, resolved.intermediateDir);
   const records: PendingVectorRecord[] = chunks.map((c) => {
     const cached = cache.get(c.hash);
@@ -304,7 +305,7 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
     total: chunks.length,
   });
 
-  // 把 todoIdx 切成多个 batch，再用 INGEST_CONCURRENCY 控制 batch 之间的并发
+  // Split todoIdx into batches, then use INGEST_CONCURRENCY to control concurrency between batches
   const batches: number[][] = [];
   for (let i = 0; i < todoIdx.length; i += resolved.embedBatchSize) {
     batches.push(todoIdx.slice(i, i + resolved.embedBatchSize));
@@ -316,11 +317,11 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
     const vectors = await resolved.embed(inputs);
     invariant(
       !Array.isArray(vectors) || vectors.length !== inputs.length,
-      `[ingest] embedding 返回数量不匹配：输入 ${inputs.length} 条，返回 ${vectors?.length ?? '非数组'}`,
+      `[ingest] embedding count mismatch: ${inputs.length} inputs sent, ${vectors?.length ?? 'not an array'} returned`,
     );
     batchIdx.forEach((j, k) => {
       const vector = vectors[k];
-      invariant(!hasValidEmbedding(vector), `[ingest] chunk ${records[j].id} 得到了非法 embedding`);
+      invariant(!hasValidEmbedding(vector), `[ingest] chunk ${records[j].id} got an invalid embedding`);
       records[j].embedding = normalize(vector);
     });
     done += batchIdx.length;
@@ -328,18 +329,18 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
   });
   await runWithConcurrency(tasks, resolved.concurrency);
 
-  // 旧缓存里的向量未必归一化过，这里统一兜底处理一次
+  // Some chunks did not get embeddings yet, or their cached vectors are not normalized; do a unified fallback pass here
   for (const r of records) {
     if (hasValidEmbedding(r.embedding)) r.embedding = normalize(r.embedding);
   }
 
   const dim = records[0]?.embedding?.length ?? 0;
 
-  // 仍有 chunk 没拿到 embedding，或维度与其它 chunk 不一致时直接 fail-fast，避免写出脏数据
+  // If any chunk still lacks an embedding or its dim is inconsistent with others, fail-fast to avoid writing dirty data
   const bad = records.find((r) => !hasValidEmbedding(r.embedding, dim));
   invariant(
     bad !== undefined,
-    `[ingest] chunk ${bad?.id} 没有得到合法且维度一致的 embedding，已中止写盘`,
+    `[ingest] chunk ${bad?.id} did not get a valid embedding with consistent dim; aborting write`,
   );
 
   const meta = {

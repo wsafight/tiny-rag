@@ -21,18 +21,18 @@ interface OllamaStreamChunk {
 
 function readOllamaEmbeddingResponse(value: unknown): OllamaEmbeddingResponse {
   if (!isRecord(value) || !('embedding' in value)) {
-    fail('Ollama embedding 返回缺少 embedding 字段');
+    fail('Ollama embedding response is missing the embedding field');
   }
   return { embedding: value.embedding };
 }
 
 function readOllamaChatResponse(value: unknown): OllamaChatResponse {
   if (!isRecord(value) || !isRecord(value.message)) {
-    fail('Ollama chat 返回缺少 message 对象');
+    fail('Ollama chat response is missing the message object');
   }
   const content = value.message.content;
   if (typeof content !== 'string') {
-    fail('Ollama chat 返回缺少 message.content');
+    fail('Ollama chat response is missing message.content');
   }
   return { content };
 }
@@ -60,7 +60,7 @@ export async function embedOllama(
     );
     if (!response.ok) {
       const errText = await response.text();
-      fail(`Ollama embedding 请求失败: ${response.status} ${errText}`);
+      fail(`Ollama embedding request failed: ${response.status} ${errText}`);
     }
     return readOllamaEmbeddingResponse(await response.json()).embedding;
   });
@@ -91,7 +91,7 @@ export async function chatOllama(
   );
   if (!response.ok) {
     const text = await response.text();
-    fail(`Ollama chat 请求失败: ${response.status} ${text}`);
+    fail(`Ollama chat request failed: ${response.status} ${text}`);
   }
 
   if (!stream) {

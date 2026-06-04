@@ -2,14 +2,14 @@ import type { SemanticChunk } from './types';
 import { invariant } from '../utils/index';
 
 /**
- * 把过长的段落按字符长度硬切，相邻块之间保留固定重叠。
- * 当 overlap >= size 时会抛错，避免切块无法向前推进。
+ * Hard-split an overly long paragraph by character length, keeping a fixed overlap between adjacent chunks.
+ * Throws when overlap >= size to avoid chunking that cannot move forward.
  */
 export function splitByLength(text: string, size: number, overlap: number): string[] {
-  invariant(!Number.isFinite(size) || size <= 0, `splitByLength: size 必须为正整数，收到 ${size}`);
+  invariant(!Number.isFinite(size) || size <= 0, `splitByLength: size must be a positive integer, received ${size}`);
   invariant(
     !Number.isFinite(overlap) || overlap < 0 || overlap >= size,
-    `splitByLength: overlap 必须在 [0, size) 内，收到 ${overlap}`,
+    `splitByLength: overlap must be within [0, size), received ${overlap}`,
   );
   if (text.length <= size) return [text];
 
@@ -27,8 +27,8 @@ export function splitByLength(text: string, size: number, overlap: number): stri
 }
 
 /**
- * 语义切块：优先按 Markdown 标题分节，再按空行段落贪心聚合，最后按长度兜底。
- * 同时为每个 chunk 拼接所属标题路径，便于检索时模型理解上下文。
+ * Semantic chunking: split by Markdown headings first, then greedily aggregate paragraphs by blank lines, falling back to length-based splitting.
+ * Also prepends the heading path to each chunk so the model can understand context during retrieval.
  */
 export function splitSemantic(text: string, size: number, overlap: number): SemanticChunk[] {
   const cleaned = String(text ?? '').replace(/\r\n/g, '\n');

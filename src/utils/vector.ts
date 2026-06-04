@@ -1,18 +1,18 @@
 import { invariant } from './invariant';
 
 /**
- * 计算两个等长向量的点积。
- * 若两个向量都已 L2 归一化，则点积等于 cosine 相似度。
+ * Compute the dot product of two equal-length vectors.
+ * If both vectors are L2-normalized, the dot product equals cosine similarity.
  */
 export function dot(a: ArrayLike<number>, b: ArrayLike<number>): number {
-  invariant(a.length !== b.length, `dot: 向量长度不一致，a=${a.length}, b=${b.length}`);
+  invariant(a.length !== b.length, `dot: vector length mismatch, a=${a.length}, b=${b.length}`);
   let s = 0;
   for (let i = 0; i < a.length; i++) s += a[i] * b[i];
   return s;
 }
 
 /**
- * 对向量做 L2 归一化（零向量保持原样返回）。
+ * L2-normalize a vector (a zero vector is returned unchanged).
  */
 export function normalize(vec: readonly number[]): number[] {
   let sum = 0;
@@ -25,7 +25,7 @@ export function normalize(vec: readonly number[]): number[] {
 }
 
 /**
- * 查询热路径使用 Float32Array，避免后续向量点积时混用普通数组。
+ * The query hot path uses Float32Array to avoid mixing plain arrays in later dot products.
  */
 export function normalizeToFloat32(vec: readonly number[]): Float32Array {
   let sum = 0;
@@ -41,7 +41,7 @@ export function normalizeToFloat32(vec: readonly number[]): Float32Array {
 }
 
 /**
- * 判断一个值是否为合法的非空数值数组（用于校验 embedding）。
+ * Check whether a value is a valid non-empty numeric array (used to validate embeddings).
  */
 export function hasValidEmbedding(v: unknown, expectedDim?: number): v is number[] {
   if (!Array.isArray(v) || v.length === 0) return false;

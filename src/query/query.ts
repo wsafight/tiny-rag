@@ -52,11 +52,11 @@ function buildResultBase(
 }
 
 /**
- * 输入问题，输出完整查询结果；不打印、不读取终端输入、不退出进程。
+ * Take a question and return the full query result; does not print, read terminal input, or exit the process.
  */
 export async function query(question: string, options: QueryOptions): Promise<QueryResult> {
   const trimmedQuestion = question.trim();
-  invariant(!trimmedQuestion, '[query] 未输入问题');
+  invariant(!trimmedQuestion, '[query] no question provided');
 
   const searchOptions = resolveSearchOptions(options);
   const retrieverSearchOptions = pickRetrieverSearchOptions(searchOptions);
@@ -66,7 +66,7 @@ export async function query(question: string, options: QueryOptions): Promise<Qu
 
   const embeddingStartedAt = performance.now();
   const [questionRaw] = await options.embed([trimmedQuestion]);
-  invariant(!hasValidEmbedding(questionRaw), '[query] 问题没有得到合法 embedding');
+  invariant(!hasValidEmbedding(questionRaw), '[query] question did not get a valid embedding');
   const questionEmbedding = normalizeToFloat32(questionRaw);
   const embeddingElapsedMs = performance.now() - embeddingStartedAt;
 

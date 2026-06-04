@@ -273,9 +273,9 @@ function scoreLoadedVectorStore(
 ): SearchResult {
   invariant(
     queryEmbedding.length !== store.meta.dim,
-    `向量库 dim=${store.meta.dim} 与当前向量 dim=${queryEmbedding.length} 不一致，请重新生成向量库`,
+    `vector store dim=${store.meta.dim} does not match query vector dim=${queryEmbedding.length}, please regenerate the vector store`,
   );
-  invariant(store.records.length === 0, '[query] 向量库为空，或所有 embedding 都非法');
+  invariant(store.records.length === 0, '[query] vector store is empty, or all embeddings are invalid');
 
   const candidatePool = Math.max(resolved.topK, resolved.topK * resolved.perSourceLimit);
   const queryTokens = tokenizeForKeyword(queryText);

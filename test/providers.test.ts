@@ -94,7 +94,7 @@ test('embed: OpenAI compatible 4xx 响应直接透出状态和正文', async (t)
 
   await assert.rejects(
     () => embed(['x'], openAIEmbeddingConfig, { requestRetries: 2 }),
-    /Embedding 请求失败: 401 bad key/,
+    /embedding request failed: 401 bad key/,
   );
   assert.equal(calls, 1);
 });
@@ -111,7 +111,7 @@ test('embed: 校验 provider 返回数量、维度和数值合法性', async (t)
 
   await assert.rejects(
     () => embed(['a', 'b'], openAIEmbeddingConfig, { requestRetries: 0 }),
-    /第 2 条 embedding 非法或维度不一致/,
+    /embedding #2 is invalid or has an inconsistent dim/,
   );
 });
 

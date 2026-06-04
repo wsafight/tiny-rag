@@ -37,7 +37,7 @@ export async function fetchWithRetry(
     }
   }
   if (lastErr instanceof Error) throw lastErr;
-  return fail(`${label} 请求失败`);
+  return fail(`${label} request failed`);
 }
 
 export async function readLines(
@@ -45,7 +45,7 @@ export async function readLines(
   onLine: (line: string) => void,
 ): Promise<void> {
   if (!stream) {
-    fail('流式响应缺少 body');
+    fail('streaming response is missing a body');
   }
   const reader = stream.getReader();
   const decoder = new TextDecoder('utf-8');

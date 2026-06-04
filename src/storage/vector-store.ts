@@ -96,7 +96,7 @@ async function canAccessVectorStore(vectorStore: string): Promise<boolean> {
 
 async function ensureVectorStoreExists(vectorStore: string): Promise<void> {
   if (!(await canAccessVectorStore(vectorStore))) {
-    fail(`未找到向量库: ${vectorStore}，请先生成向量库`);
+    fail(`vector store not found: ${vectorStore}, please generate it first`);
   }
 }
 
@@ -181,10 +181,10 @@ async function readLoadedCacheRecords(file: string): Promise<LoadedVectorStoreRe
   for await (const { lineNumber, value } of readJsonLines(file)) {
     try {
       const record = readLoadedRecord(value);
-      if (!record) fail(`中间态 records 第 ${lineNumber} 行字段不完整`);
+      if (!record) fail(`intermediate records line ${lineNumber} has incomplete fields`);
       records.push(record);
     } catch {
-      fail(`中间态 records 第 ${lineNumber} 行损坏，请删除中间态目录后重试`);
+      fail(`intermediate records line ${lineNumber} is corrupted, please delete the intermediate directory and retry`);
     }
   }
   return records;
@@ -280,50 +280,50 @@ export function validateVectorStoreMeta(
 ): asserts meta is StoreMeta {
   invariant(
     !isPositiveInteger(meta.version),
-    '向量库 version 缺失或非法，请重新生成向量库',
+    'vector store version is missing or invalid, please regenerate the vector store',
   );
   invariant(
     meta.version !== VECTOR_STORE_SCHEMA_VERSION,
-    `向量库 version=${meta.version} 与当前期望 ${VECTOR_STORE_SCHEMA_VERSION} 不一致，请重新生成向量库`,
+    `vector store version=${meta.version} does not match the expected ${VECTOR_STORE_SCHEMA_VERSION}, please regenerate the vector store`,
   );
   invariant(
     typeof meta.provider !== 'string' || meta.provider.trim() === '',
-    '向量库 provider 缺失或非法，请重新生成向量库',
+    'vector store provider is missing or invalid, please regenerate the vector store',
   );
   invariant(
     meta.provider !== embConfig.provider,
-    `向量库 provider=${meta.provider} 与当前 ${embConfig.provider} 不一致，请重新生成向量库`,
+    `vector store provider=${meta.provider} does not match the current ${embConfig.provider}, please regenerate the vector store`,
   );
   invariant(
     typeof meta.model !== 'string' || meta.model.trim() === '',
-    '向量库 model 缺失或非法，请重新生成向量库',
+    'vector store model is missing or invalid, please regenerate the vector store',
   );
   invariant(
     meta.model !== embConfig.model,
-    `向量库 model=${meta.model} 与当前 ${embConfig.model} 不一致，请重新生成向量库`,
+    `vector store model=${meta.model} does not match the current ${embConfig.model}, please regenerate the vector store`,
   );
-  invariant(!isPositiveInteger(meta.dim), '向量库 dim 缺失或非法，请重新生成向量库');
+  invariant(!isPositiveInteger(meta.dim), 'vector store dim is missing or invalid, please regenerate the vector store');
   invariant(
     embeddingDim !== undefined && meta.dim !== embeddingDim,
-    `向量库 dim=${meta.dim} 与当前向量 dim=${embeddingDim} 不一致，请重新生成向量库`,
+    `vector store dim=${meta.dim} does not match the current vector dim=${embeddingDim}, please regenerate the vector store`,
   );
   const chunkSize = meta.chunkSize;
   const chunkOverlap = meta.chunkOverlap;
   if (!isPositiveInteger(chunkSize)) {
-    fail('向量库 chunkSize 缺失或非法，请重新生成向量库');
+    fail('vector store chunkSize is missing or invalid, please regenerate the vector store');
   }
   if (!isNonNegativeInteger(chunkOverlap)) {
-    fail('向量库 chunkOverlap 缺失或非法，请重新生成向量库');
+    fail('vector store chunkOverlap is missing or invalid, please regenerate the vector store');
   }
   invariant(
     chunkOverlap >= chunkSize,
-    `向量库 chunkOverlap=${chunkOverlap} 必须小于 chunkSize=${chunkSize}，请重新生成向量库`,
+    `vector store chunkOverlap=${chunkOverlap} must be less than chunkSize=${chunkSize}, please regenerate the vector store`,
   );
   invariant(
     meta.headingWeight !== undefined && !isNonNegativeFiniteNumber(meta.headingWeight),
-    '向量库 headingWeight 非法，请重新生成向量库',
+    'vector store headingWeight is invalid, please regenerate the vector store',
   );
-  invariant(!isValidIsoDate(meta.createdAt), '向量库 createdAt 缺失或非法，请重新生成向量库');
+  invariant(!isValidIsoDate(meta.createdAt), 'vector store createdAt is missing or invalid, please regenerate the vector store');
 }
 
 export async function readVectorStoreMeta(
@@ -331,16 +331,16 @@ export async function readVectorStoreMeta(
   vectorStore = DEFAULT_VECTOR_STORE,
 ): Promise<StoreMeta> {
   for await (const { line } of readVectorStoreTextLines(vectorStore)) {
-    const obj = parseVectorStoreLine(line, '向量库首行损坏，请重新生成向量库');
+    const obj = parseVectorStoreLine(line, 'vector store first line is corrupted, please regenerate the vector store');
     const meta = obj._meta;
     if (!meta) {
-      fail('向量库缺少 _meta 元数据，文件格式不正确，请重新生成向量库');
+      fail('vector store is missing _meta metadata, the file format is incorrect, please regenerate the vector store');
     }
     validateVectorStoreMeta(meta, embConfig);
     return meta;
   }
 
-  return fail('向量库为空，请重新生成向量库');
+  return fail('vector store is empty, please regenerate the vector store');
 }
 
 export async function* streamVectorStoreRecords(
@@ -353,10 +353,10 @@ export async function* streamVectorStoreRecords(
   for await (const { line, lineNumber } of readVectorStoreTextLines(vectorStore)) {
     const obj = tryParseVectorStoreLine(line);
     if (!obj) {
-      options.onWarning?.(`跳过无法解析的第 ${lineNumber} 行`);
+      options.onWarning?.(`skipping unparseable line ${lineNumber}`);
       if (!metaSeen) {
         metaSeen = true;
-        fail('向量库首行损坏，请重新生成向量库');
+        fail('vector store first line is corrupted, please regenerate the vector store');
       }
       continue;
     }
@@ -365,7 +365,7 @@ export async function* streamVectorStoreRecords(
       metaSeen = true;
       const meta = obj._meta;
       if (!meta) {
-        fail('向量库缺少 _meta 元数据，文件格式不正确（应为 NDJSON），请重新生成向量库');
+        fail('vector store is missing _meta metadata, the file format is incorrect (should be NDJSON), please regenerate the vector store');
       }
       validateVectorStoreMeta(meta, embConfig, options.embeddingDim);
       expectedDim = options.embeddingDim ?? meta.dim;
@@ -374,7 +374,7 @@ export async function* streamVectorStoreRecords(
     }
 
     if (!hasValidEmbedding(obj.embedding, expectedDim)) {
-      options.onWarning?.(`跳过非法或维度不一致的 embedding: ${obj.id ?? 'unknown'}`);
+      options.onWarning?.(`skipping invalid or dim-mismatched embedding: ${obj.id ?? 'unknown'}`);
       continue;
     }
     if (
@@ -383,7 +383,7 @@ export async function* streamVectorStoreRecords(
       typeof obj.chunkIndex !== 'number' ||
       typeof obj.content !== 'string'
     ) {
-      options.onWarning?.(`跳过字段不完整的记录: ${obj.id ?? 'unknown'}`);
+      options.onWarning?.(`skipping record with incomplete fields: ${obj.id ?? 'unknown'}`);
       continue;
     }
 
@@ -400,7 +400,7 @@ export async function* streamVectorStoreRecords(
   }
 
   if (!metaSeen) {
-    fail('向量库为空，请重新生成向量库');
+    fail('vector store is empty, please regenerate the vector store');
   }
 }
 
@@ -436,14 +436,14 @@ async function tryLoadVectorStoreCache(
 
   const bytes = await fs.readFile(paths.embeddings);
   if (bytes.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
-    fail('中间态 embeddings 字节长度非法，请删除中间态目录后重试');
+    fail('intermediate embeddings byte length is invalid, please delete the intermediate directory and retry');
   }
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const embeddings = new Float32Array(buffer);
   invariant(
     records.length !== manifest.recordCount ||
       embeddings.length !== manifest.recordCount * manifest.dim,
-    '中间态向量矩阵与 manifest 不一致，请删除中间态目录后重试',
+    'intermediate vector matrix is inconsistent with the manifest, please delete the intermediate directory and retry',
   );
 
   return { meta: manifest.meta, records, embeddings };
@@ -516,7 +516,7 @@ export async function loadVectorStore(
     const cached = await tryLoadVectorStoreCache(embConfig, vectorStore, intermediateDir).catch(
       (err) => {
         options.onWarning?.(
-          `[intermediate] 中间态缓存不可用，回退到 NDJSON: ${
+          `[intermediate] intermediate cache unavailable, falling back to NDJSON: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -546,7 +546,7 @@ export async function loadVectorStore(
   }
 
   if (meta === undefined) {
-    fail('向量库缺少 _meta 元数据，文件格式不正确，请重新生成向量库');
+    fail('vector store is missing _meta metadata, the file format is incorrect, please regenerate the vector store');
   }
   const embeddings = new Float32Array(records.length * meta.dim);
   for (let i = 0; i < vectors.length; i++) {
@@ -557,7 +557,7 @@ export async function loadVectorStore(
   if (intermediateDir) {
     await writeLoadedVectorStoreCache(store, vectorStore, intermediateDir).catch((err) => {
       options.onWarning?.(
-        `[intermediate] 写入中间态缓存失败: ${
+        `[intermediate] failed to write intermediate cache: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

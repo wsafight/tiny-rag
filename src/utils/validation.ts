@@ -6,15 +6,15 @@ export function assertArray(value: unknown, message: string): asserts value is u
 }
 
 export function assertPositiveInteger(name: string, value: number): void {
-  invariant(!Number.isInteger(value) || value < 1, `${name} 必须是 >= 1 的整数，收到 ${value}`);
+  invariant(!Number.isInteger(value) || value < 1, `${name} must be an integer >= 1, received ${value}`);
 }
 
 export function assertNonNegativeInteger(name: string, value: number): void {
-  invariant(!Number.isInteger(value) || value < 0, `${name} 必须是 >= 0 的整数，收到 ${value}`);
+  invariant(!Number.isInteger(value) || value < 0, `${name} must be an integer >= 0, received ${value}`);
 }
 
 export function assertNonNegativeNumber(name: string, value: number): void {
-  invariant(!Number.isFinite(value) || value < 0, `${name} 必须是 >= 0 的数字，收到 ${value}`);
+  invariant(!Number.isFinite(value) || value < 0, `${name} must be a number >= 0, received ${value}`);
 }
 
 export function assertNumberInRange(
@@ -25,7 +25,7 @@ export function assertNumberInRange(
 ): void {
   invariant(
     !Number.isFinite(value) || value < min || value > max,
-    `${name} 必须在 [${min}, ${max}] 内，收到 ${value}`,
+    `${name} must be within [${min}, ${max}], received ${value}`,
   );
 }
 
@@ -35,7 +35,7 @@ export function assertLessThan(
   upperName: string,
   upperValue: number,
 ): void {
-  invariant(value >= upperValue, `${name} 必须小于 ${upperName}，当前 ${value} >= ${upperValue}`);
+  invariant(value >= upperValue, `${name} must be less than ${upperName}, currently ${value} >= ${upperValue}`);
 }
 
 export function assertValidEmbedding(

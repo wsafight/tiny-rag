@@ -28,12 +28,12 @@ interface OpenAIStreamChunk {
 
 function readOpenAIEmbeddingResponse(value: unknown): OpenAIEmbeddingResponse {
   if (!isRecord(value) || !Array.isArray(value.data)) {
-    fail('Embedding 返回缺少 data 数组');
+    fail('embedding response is missing the data array');
   }
   return {
     data: value.data.map((item, index) => {
       if (!isRecord(item) || !('embedding' in item)) {
-        fail(`Embedding 返回的第 ${index + 1} 条缺少 embedding 字段`);
+        fail(`embedding response item #${index + 1} is missing the embedding field`);
       }
       const rawIndex = item.index;
       return {
@@ -46,15 +46,15 @@ function readOpenAIEmbeddingResponse(value: unknown): OpenAIEmbeddingResponse {
 
 function readOpenAIChatResponse(value: unknown): OpenAIChatResponse {
   if (!isRecord(value) || !Array.isArray(value.choices)) {
-    fail('Chat 返回缺少 choices 数组');
+    fail('chat response is missing the choices array');
   }
   const firstChoice = value.choices[0];
   if (!isRecord(firstChoice) || !isRecord(firstChoice.message)) {
-    fail('Chat 返回缺少 choices[0].message');
+    fail('chat response is missing choices[0].message');
   }
   const content = firstChoice.message.content;
   if (typeof content !== 'string') {
-    fail('Chat 返回缺少 choices[0].message.content');
+    fail('chat response is missing choices[0].message.content');
   }
   return { content };
 }
@@ -84,7 +84,7 @@ export async function embedOpenAICompatible(
   );
   if (!response.ok) {
     const text = await response.text();
-    fail(`Embedding 请求失败: ${response.status} ${text}`);
+    fail(`embedding request failed: ${response.status} ${text}`);
   }
   const data = readOpenAIEmbeddingResponse(await response.json());
   return data.data
@@ -120,7 +120,7 @@ export async function chatOpenAICompatible(
   );
   if (!response.ok) {
     const text = await response.text();
-    fail(`Chat 请求失败: ${response.status} ${text}`);
+    fail(`chat request failed: ${response.status} ${text}`);
   }
 
   if (!stream) {

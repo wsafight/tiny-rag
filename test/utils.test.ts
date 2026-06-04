@@ -51,7 +51,7 @@ test('dot: 空向量为 0', () => {
 });
 
 test('dot: 向量长度不一致应抛错', () => {
-  assert.throws(() => dot([1, 2], [1]), /长度不一致/);
+  assert.throws(() => dot([1, 2], [1]), /length mismatch/);
 });
 
 test('dot: 归一化向量的点积等于 cosine', () => {

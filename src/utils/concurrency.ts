@@ -1,6 +1,6 @@
 /**
- * 用有限并发执行异步任务工厂，避免一次性把后端打挂。
- * 与输入顺序对齐返回结果数组。
+ * Run async task factories with bounded concurrency to avoid overwhelming the backend.
+ * The returned results array aligns with the input order.
  */
 export async function runWithConcurrency<T>(
   tasks: Array<() => Promise<T>>,

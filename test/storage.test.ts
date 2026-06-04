@@ -198,9 +198,9 @@ test('streamVectorStoreRecords: 跳过坏行并通过 onWarning 暴露原因', a
   assert.equal(records[0].heading, '');
   assert.deepEqual(records[0].keywordContentTerms, [['ok', 1]]);
   assert.equal(warnings.length, 3);
-  assert.match(warnings[0], /无法解析/);
-  assert.match(warnings[1], /非法或维度不一致/);
-  assert.match(warnings[2], /字段不完整/);
+  assert.match(warnings[0], /unparseable/);
+  assert.match(warnings[1], /dim-mismatched/);
+  assert.match(warnings[2], /incomplete fields/);
 });
 
 test('readVectorStoreMeta/loadVectorStore: meta 损坏或不匹配时失败', async (t) => {
@@ -217,7 +217,7 @@ test('readVectorStoreMeta/loadVectorStore: meta 损坏或不匹配时失败', as
 
   await assert.rejects(
     () => readVectorStoreMeta(embeddingConfig, missingMetaStore),
-    /缺少 _meta/,
+    /missing _meta/,
   );
   await assert.rejects(
     () => loadVectorStore(embeddingConfig, wrongProviderStore ? { vectorStore: wrongProviderStore } : {}),
@@ -225,7 +225,7 @@ test('readVectorStoreMeta/loadVectorStore: meta 损坏或不匹配时失败', as
   );
   await assert.rejects(
     () => readVectorStoreMeta(embeddingConfig, corruptStore),
-    /首行损坏/,
+    /first line is corrupted/,
   );
 });
 

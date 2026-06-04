@@ -15,7 +15,7 @@ export function normalizeDocumentExtensions(
     .map((ext) => (ext.startsWith('.') ? ext : `.${ext}`));
 
   const unique = [...new Set(normalized)];
-  invariant(unique.length === 0, 'documentExtensions 至少需要包含一个扩展名');
+  invariant(unique.length === 0, 'documentExtensions must contain at least one extension');
   return unique;
 }
 

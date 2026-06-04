@@ -271,7 +271,7 @@ test('query: 空白问题直接拒绝且不调用 embed/chat', async () => {
           return '不应该调用';
         },
       }),
-    /未输入问题/,
+    /no question provided/,
   );
 
   assert.equal(embedCalled, false);
@@ -532,7 +532,7 @@ test('ingest: embedding 返回数量不匹配时 fail-fast 且不写脏文件', 
         embeddingConfig,
         embed: async () => [],
       }),
-    /embedding 返回数量不匹配/,
+    /embedding count mismatch/,
   );
   await assert.rejects(() => access(vectorStore));
 });

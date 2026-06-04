@@ -17,21 +17,21 @@ export type { ProviderRuntimeOptions, ResolvedProviderRuntimeOptions } from './r
 export { DEFAULT_PROVIDER_RUNTIME_OPTIONS, resolveProviderRuntimeOptions } from './runtime';
 
 function validateEmbeddings(vectors: unknown, expectedCount: number, label: string): number[][] {
-  assertArray(vectors, `${label} 返回值不是向量数组`);
+  assertArray(vectors, `${label} return value is not an array of vectors`);
   invariant(
     vectors.length !== expectedCount,
-    `${label} 返回数量不匹配：输入 ${expectedCount} 条，返回 ${vectors.length} 条`,
+    `${label} count mismatch: ${expectedCount} inputs sent, ${vectors.length} returned`,
   );
   if (expectedCount === 0) return [];
 
   const first = vectors[0];
-  assertValidEmbedding(first, `${label} 返回的第 1 条 embedding 非法`);
+  assertValidEmbedding(first, `${label} embedding #1 is invalid`);
   const dim = first.length;
 
   const validated: number[][] = [];
   for (let i = 0; i < vectors.length; i++) {
     const vector = vectors[i];
-    assertValidEmbedding(vector, `${label} 返回的第 ${i + 1} 条 embedding 非法或维度不一致`, dim);
+    assertValidEmbedding(vector, `${label} embedding #${i + 1} is invalid or has an inconsistent dim`, dim);
     validated.push(vector);
   }
   return validated;

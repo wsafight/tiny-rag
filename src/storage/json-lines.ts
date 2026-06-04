@@ -20,7 +20,7 @@ export async function* readJsonLines(file: string): AsyncGenerator<JsonLine> {
       try {
         yield { lineNumber, value: JSON.parse(line) as unknown };
       } catch {
-        throw new Error(`第 ${lineNumber} 行不是合法 JSON`);
+        throw new Error(`line ${lineNumber} is not valid JSON`);
       }
     }
   } finally {
