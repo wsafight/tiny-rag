@@ -27,6 +27,7 @@
     "cli": "node --import tsx cli.ts",
     "serve": "node --import tsx serve.ts",
     "test": "node --import tsx --test test/*.test.ts",
+    "bench": "node --import tsx bench/bench.ts",
     "prepack": "npm run build"
   },
   "engines": {

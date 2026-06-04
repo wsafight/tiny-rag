@@ -20,7 +20,7 @@ import {
   DEFAULT_INGEST_CONCURRENCY,
   ingest,
 } from './src/ingestion/index';
-import { query } from './src/query/index';
+import { createRetriever, query } from './src/query/index';
 import {
   DEFAULT_KEYWORD_HEADING_WEIGHT,
   DEFAULT_KEYWORD_WEIGHT,
@@ -77,8 +77,8 @@ function printUsage(): void {
   tiny-rag query "你的问题"
 
 Development:
-  npm run ingest
-  npm run query -- "你的问题"`);
+  pnpm ingest
+  pnpm query -- "你的问题"`);
 }
 
 function getLLMConfig(): LLMConfig {
@@ -162,7 +162,7 @@ async function readQuestion(queryArgs: readonly string[]): Promise<string> {
     return lines.join('\n').trim();
   }
 
-  console.log('直接输入问题，回车提交（Ctrl+C 退出）；也可以用：npm run query -- "你的问题"');
+  console.log('直接输入问题，回车提交（Ctrl+C 退出）；也可以用：pnpm query -- "你的问题"');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
     rl.question('请输入问题: ', (answer) => {
@@ -268,8 +268,17 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
-function printRetrievalTime(elapsedMs: number): void {
-  console.log(`${label('Retrieval')} ${formatDuration(elapsedMs)}`);
+function printRetrievalTime(timing: {
+  embeddingElapsedMs: number;
+  searchElapsedMs: number;
+  retrievalElapsedMs: number;
+}): void {
+  console.log(
+    `${label('Retrieval')} ${formatDuration(timing.retrievalElapsedMs)} ` +
+      `(embedding ${formatDuration(timing.embeddingElapsedMs)}, search ${formatDuration(
+        timing.searchElapsedMs,
+      )})`,
+  );
 }
 
 function printIngestProgress(event: IngestProgressEvent): void {
@@ -309,6 +318,7 @@ async function runIngest(): Promise<void> {
   const result = await ingest({
     documentsDir,
     vectorStore: envString('VECTOR_STORE', DEFAULT_VECTOR_STORE),
+    intermediateDir: envString('INTERMEDIATE_DIR'),
     documentExtensions,
     sourceRoot: envString('SOURCE_ROOT', documentsDir),
     chunkSize: envInteger('CHUNK_SIZE', DEFAULT_CHUNK_SIZE, { min: 1 }),
@@ -327,6 +337,8 @@ async function runIngest(): Promise<void> {
     );
   } else if (result.skippedReason === 'no-chunks') {
     console.warn(`[ingest] ${result.documentsDir} 中没有可导入的非空内容`);
+  } else if (result.skippedReason === 'unchanged') {
+    console.log(`[ingest] 内容未变化，跳过重写 ${result.vectorStore}`);
   }
 }
 
@@ -342,31 +354,44 @@ async function runQuery(queryArgs: readonly string[]): Promise<void> {
   const embeddingConfig = getEmbeddingConfig();
   const runtimeOptions = getProviderRuntimeOptions();
   const minScore = envNumber('MIN_SCORE', DEFAULT_MIN_SCORE, { min: -1, max: 1 });
+  const vectorStore = envString('VECTOR_STORE', DEFAULT_QUERY_VECTOR_STORE);
+  const intermediateDir = envString('INTERMEDIATE_DIR');
+  const topK = envInteger('TOP_K', DEFAULT_TOP_K, { min: 1 });
+  const perSourceLimit = envInteger('PER_SOURCE_LIMIT', DEFAULT_PER_SOURCE_LIMIT, { min: 1 });
   const keywordWeight = envNumber('KEYWORD_WEIGHT', DEFAULT_KEYWORD_WEIGHT, { min: 0, max: 1 });
   const keywordHeadingWeight = envNumber('KEYWORD_HEADING_WEIGHT', DEFAULT_KEYWORD_HEADING_WEIGHT, {
     min: 0,
   });
   const stream = envBoolean('STREAM', true);
+  const embed = createEmbedder(embeddingConfig, runtimeOptions);
+  const chat = createChat(llmConfig, runtimeOptions);
+  const onWarning = (message: string) => console.warn(message);
+  const searchOptions = {
+    vectorStore,
+    intermediateDir,
+    topK,
+    minScore,
+    perSourceLimit,
+    keywordWeight,
+    keywordHeadingWeight,
+    onWarning,
+  };
 
   printQueryHeader(question, llmConfig, embeddingConfig);
+  const retriever = await createRetriever(embeddingConfig, searchOptions);
 
   if (stream) {
     const result = await query(question, {
-      vectorStore: envString('VECTOR_STORE', DEFAULT_QUERY_VECTOR_STORE),
-      topK: envInteger('TOP_K', DEFAULT_TOP_K, { min: 1 }),
-      minScore,
-      perSourceLimit: envInteger('PER_SOURCE_LIMIT', DEFAULT_PER_SOURCE_LIMIT, { min: 1 }),
-      keywordWeight,
-      keywordHeadingWeight,
+      ...searchOptions,
       embeddingConfig,
       llmConfig,
-      embed: createEmbedder(embeddingConfig, runtimeOptions),
-      chat: createChat(llmConfig, runtimeOptions),
+      embed,
+      chat,
+      retriever,
       stream: true,
-      onWarning: (message) => console.warn(message),
-      onRetrieved: ({ hits, retrievalElapsedMs }) => {
+      onRetrieved: ({ hits, embeddingElapsedMs, searchElapsedMs, retrievalElapsedMs }) => {
         printHits(hits, minScore);
-        printRetrievalTime(retrievalElapsedMs);
+        printRetrievalTime({ embeddingElapsedMs, searchElapsedMs, retrievalElapsedMs });
         if (hits.length > 0) {
           printSection('Answer');
           process.stdout.write('\n');
@@ -385,21 +410,16 @@ async function runQuery(queryArgs: readonly string[]): Promise<void> {
   }
 
   const result = await query(question, {
-    vectorStore: envString('VECTOR_STORE', DEFAULT_QUERY_VECTOR_STORE),
-    topK: envInteger('TOP_K', DEFAULT_TOP_K, { min: 1 }),
-    minScore,
-    perSourceLimit: envInteger('PER_SOURCE_LIMIT', DEFAULT_PER_SOURCE_LIMIT, { min: 1 }),
-    keywordWeight,
-    keywordHeadingWeight,
+    ...searchOptions,
     embeddingConfig,
     llmConfig,
-    embed: createEmbedder(embeddingConfig, runtimeOptions),
-    chat: createChat(llmConfig, runtimeOptions),
+    embed,
+    chat,
+    retriever,
     stream: false,
-    onWarning: (message) => console.warn(message),
-    onRetrieved: ({ hits, retrievalElapsedMs }) => {
+    onRetrieved: ({ hits, embeddingElapsedMs, searchElapsedMs, retrievalElapsedMs }) => {
       printHits(hits, minScore);
-      printRetrievalTime(retrievalElapsedMs);
+      printRetrievalTime({ embeddingElapsedMs, searchElapsedMs, retrievalElapsedMs });
     },
   });
 

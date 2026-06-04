@@ -13,5 +13,12 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["cli.ts", "serve.ts", "rslib.config.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "cli.ts",
+    "serve.ts",
+    "rslib.config.ts",
+    "bench/**/*.ts",
+    "src/**/*.ts",
+    "test/**/*.ts"
+  ]
 }

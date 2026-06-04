@@ -1,5 +1,5 @@
 import { fetchWithRetry, readLines } from './http';
-import { fail, runWithConcurrency } from '../utils/index';
+import { fail, isRecord, runWithConcurrency, tryParseJson } from '../utils/index';
 import type { ChatMessage, ChatOptions, ModelConfig } from './types';
 import type { ResolvedProviderRuntimeOptions } from './runtime';
 
@@ -19,19 +19,15 @@ interface OllamaStreamChunk {
   };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 function readOllamaEmbeddingResponse(value: unknown): OllamaEmbeddingResponse {
-  if (!isObject(value) || !('embedding' in value)) {
+  if (!isRecord(value) || !('embedding' in value)) {
     fail('Ollama embedding 返回缺少 embedding 字段');
   }
   return { embedding: value.embedding };
 }
 
 function readOllamaChatResponse(value: unknown): OllamaChatResponse {
-  if (!isObject(value) || !isObject(value.message)) {
+  if (!isRecord(value) || !isRecord(value.message)) {
     fail('Ollama chat 返回缺少 message 对象');
   }
   const content = value.message.content;
@@ -42,12 +38,8 @@ function readOllamaChatResponse(value: unknown): OllamaChatResponse {
 }
 
 function tryReadOllamaStreamChunk(line: string): OllamaStreamChunk | undefined {
-  try {
-    const value = JSON.parse(line) as unknown;
-    return isObject(value) ? (value as OllamaStreamChunk) : undefined;
-  } catch {
-    return undefined;
-  }
+  const value = tryParseJson(line);
+  return isRecord(value) ? (value as OllamaStreamChunk) : undefined;
 }
 
 export async function embedOllama(

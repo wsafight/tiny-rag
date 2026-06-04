@@ -1,10 +1,9 @@
-import { promises as fs, createReadStream, createWriteStream } from 'node:fs';
-import { once } from 'node:events';
+import { promises as fs, createReadStream, type Dirent } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { DEFAULT_VECTOR_STORE, VECTOR_STORE_SCHEMA_VERSION } from '../constants/index';
-import { fail, hasValidEmbedding, invariant } from '../utils/index';
+import { fail, hasValidEmbedding, invariant, sha1Hex, tryParseJson } from '../utils/index';
+import { readJsonLines, writeFileAtomic, writeJsonLinesAtomic } from './json-lines';
 import type { EmbeddingConfig } from '../providers/types';
 import type { KeywordStats, StoreMeta, TermCounts } from './types';
 
@@ -34,12 +33,13 @@ export interface VectorStoreRecord extends KeywordStats {
 }
 
 export interface LoadedVectorStoreRecord extends Omit<VectorStoreRecord, 'embedding'> {
-  embedding: Float32Array;
+  embeddingOffset: number;
 }
 
 export interface LoadedVectorStore {
   meta: StoreMeta;
   records: LoadedVectorStoreRecord[];
+  embeddings: Float32Array;
 }
 
 export interface StreamVectorStoreOptions {
@@ -51,13 +51,39 @@ export interface StreamVectorStoreOptions {
 
 export interface LoadVectorStoreOptions {
   vectorStore?: string;
+  intermediateDir?: string;
   onWarning?: (message: string) => void;
+}
+
+export interface WriteVectorStoreOptions {
+  intermediateDir?: string;
 }
 
 interface VectorStoreTextLine {
   line: string;
   lineNumber: number;
 }
+
+interface VectorStoreCacheManifest {
+  version: 1;
+  sourcePath: string;
+  sourceSize: number;
+  sourceMtimeMs: number;
+  meta: StoreMeta;
+  recordCount: number;
+  dim: number;
+  recordsFile: string;
+  embeddingsFile: string;
+}
+
+interface VectorStoreCachePaths {
+  manifest: string;
+  records: string;
+  embeddings: string;
+}
+
+const INTERMEDIATE_CACHE_FILE_RE =
+  /^[a-f0-9]{16}\.(?:manifest\.json|records\.ndjson|embeddings\.f32)(?:\.[^.]+\.tmp)?$/;
 
 async function canAccessVectorStore(vectorStore: string): Promise<boolean> {
   try {
@@ -72,6 +98,96 @@ async function ensureVectorStoreExists(vectorStore: string): Promise<void> {
   if (!(await canAccessVectorStore(vectorStore))) {
     fail(`未找到向量库: ${vectorStore}，请先生成向量库`);
   }
+}
+
+function resolveIntermediateDir(intermediateDir?: string): string | undefined {
+  const trimmed = intermediateDir?.trim();
+  return trimmed ? path.resolve(trimmed) : undefined;
+}
+
+function getVectorStoreCachePaths(vectorStore: string, intermediateDir: string): VectorStoreCachePaths {
+  const sourcePath = path.resolve(vectorStore);
+  const key = sha1Hex(sourcePath).slice(0, 16);
+  return {
+    manifest: path.join(intermediateDir, `${key}.manifest.json`),
+    records: path.join(intermediateDir, `${key}.records.ndjson`),
+    embeddings: path.join(intermediateDir, `${key}.embeddings.f32`),
+  };
+}
+
+export async function clearIntermediateCache(intermediateDir?: string): Promise<void> {
+  const dir = resolveIntermediateDir(intermediateDir);
+  if (!dir) return;
+
+  let entries: Dirent<string>[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if (err instanceof Error && 'code' in err && err.code === 'ENOENT') return;
+    throw err;
+  }
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isFile() || !INTERMEDIATE_CACHE_FILE_RE.test(entry.name)) return;
+      await fs.rm(path.join(dir, entry.name), { force: true });
+    }),
+  );
+}
+
+function readLoadedRecord(value: unknown): LoadedVectorStoreRecord | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const obj = value as VectorStoreLine & { embeddingOffset?: unknown };
+  if (
+    typeof obj.id !== 'string' ||
+    typeof obj.source !== 'string' ||
+    typeof obj.chunkIndex !== 'number' ||
+    typeof obj.content !== 'string' ||
+    typeof obj.embeddingOffset !== 'number' ||
+    !Number.isInteger(obj.embeddingOffset) ||
+    obj.embeddingOffset < 0
+  ) {
+    return undefined;
+  }
+  return {
+    id: obj.id,
+    source: obj.source,
+    chunkIndex: obj.chunkIndex,
+    heading: typeof obj.heading === 'string' ? obj.heading : '',
+    content: obj.content,
+    hash: typeof obj.hash === 'string' ? obj.hash : undefined,
+    embeddingOffset: obj.embeddingOffset,
+    ...readKeywordStats(obj),
+  };
+}
+
+function toCacheRecord(
+  value: object,
+  embeddingOffset: number,
+): LoadedVectorStoreRecord | undefined {
+  return readLoadedRecord({ ...value, embeddingOffset });
+}
+
+function* vectorStoreJsonLines(
+  meta: StoreMeta,
+  records: readonly object[],
+): Generator<unknown> {
+  yield { _meta: meta };
+  yield* records;
+}
+
+async function readLoadedCacheRecords(file: string): Promise<LoadedVectorStoreRecord[]> {
+  const records: LoadedVectorStoreRecord[] = [];
+  for await (const { lineNumber, value } of readJsonLines(file)) {
+    try {
+      const record = readLoadedRecord(value);
+      if (!record) fail(`中间态 records 第 ${lineNumber} 行字段不完整`);
+      records.push(record);
+    } catch {
+      fail(`中间态 records 第 ${lineNumber} 行损坏，请删除中间态目录后重试`);
+    }
+  }
+  return records;
 }
 
 async function* readVectorStoreTextLines(
@@ -103,11 +219,7 @@ function parseVectorStoreLine(line: string, message: string): VectorStoreLine {
 }
 
 function tryParseVectorStoreLine(line: string): VectorStoreLine | undefined {
-  try {
-    return JSON.parse(line) as VectorStoreLine;
-  } catch {
-    return undefined;
-  }
+  return tryParseJson(line) as VectorStoreLine | undefined;
 }
 
 function isTermCounts(value: unknown): value is TermCounts {
@@ -292,38 +404,199 @@ export async function* streamVectorStoreRecords(
   }
 }
 
+async function tryLoadVectorStoreCache(
+  embConfig: EmbeddingConfig,
+  vectorStore: string,
+  intermediateDir: string,
+): Promise<LoadedVectorStore | undefined> {
+  const paths = getVectorStoreCachePaths(vectorStore, intermediateDir);
+  const sourcePath = path.resolve(vectorStore);
+  const sourceStat = await fs.stat(sourcePath);
+
+  let manifest: VectorStoreCacheManifest;
+  try {
+    manifest = JSON.parse(await fs.readFile(paths.manifest, 'utf-8')) as VectorStoreCacheManifest;
+  } catch {
+    return undefined;
+  }
+
+  if (
+    manifest.version !== 1 ||
+    manifest.sourcePath !== sourcePath ||
+    manifest.sourceSize !== sourceStat.size ||
+    manifest.sourceMtimeMs !== sourceStat.mtimeMs ||
+    manifest.recordsFile !== path.basename(paths.records) ||
+    manifest.embeddingsFile !== path.basename(paths.embeddings)
+  ) {
+    return undefined;
+  }
+  validateVectorStoreMeta(manifest.meta, embConfig, manifest.dim);
+
+  const records = await readLoadedCacheRecords(paths.records);
+
+  const bytes = await fs.readFile(paths.embeddings);
+  if (bytes.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
+    fail('中间态 embeddings 字节长度非法，请删除中间态目录后重试');
+  }
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const embeddings = new Float32Array(buffer);
+  invariant(
+    records.length !== manifest.recordCount ||
+      embeddings.length !== manifest.recordCount * manifest.dim,
+    '中间态向量矩阵与 manifest 不一致，请删除中间态目录后重试',
+  );
+
+  return { meta: manifest.meta, records, embeddings };
+}
+
+async function writeLoadedVectorStoreCache(
+  store: LoadedVectorStore,
+  vectorStore: string,
+  intermediateDir: string,
+): Promise<void> {
+  const paths = getVectorStoreCachePaths(vectorStore, intermediateDir);
+  const sourcePath = path.resolve(vectorStore);
+  const sourceStat = await fs.stat(sourcePath);
+  await fs.mkdir(intermediateDir, { recursive: true });
+
+  await writeJsonLinesAtomic(paths.records, store.records);
+  await writeFileAtomic(
+    paths.embeddings,
+    new Uint8Array(
+      store.embeddings.buffer,
+      store.embeddings.byteOffset,
+      store.embeddings.byteLength,
+    ),
+  );
+
+  const manifest: VectorStoreCacheManifest = {
+    version: 1,
+    sourcePath,
+    sourceSize: sourceStat.size,
+    sourceMtimeMs: sourceStat.mtimeMs,
+    meta: store.meta,
+    recordCount: store.records.length,
+    dim: store.meta.dim,
+    recordsFile: path.basename(paths.records),
+    embeddingsFile: path.basename(paths.embeddings),
+  };
+  await writeFileAtomic(paths.manifest, JSON.stringify(manifest, null, 2));
+}
+
+async function writeVectorStoreCacheFromRecords(
+  meta: StoreMeta,
+  records: readonly object[],
+  vectorStore: string,
+  intermediateDir: string,
+): Promise<void> {
+  const loadedRecords: LoadedVectorStoreRecord[] = [];
+  const embeddings = new Float32Array(records.length * meta.dim);
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i] as VectorStoreLine;
+    if (!hasValidEmbedding(record.embedding, meta.dim)) return;
+    const loadedRecord = toCacheRecord(record, i * meta.dim);
+    if (!loadedRecord) return;
+    loadedRecords.push(loadedRecord);
+    embeddings.set(record.embedding, i * meta.dim);
+  }
+  await writeLoadedVectorStoreCache(
+    { meta, records: loadedRecords, embeddings },
+    vectorStore,
+    intermediateDir,
+  );
+}
+
 export async function loadVectorStore(
   embConfig: EmbeddingConfig,
   options: LoadVectorStoreOptions = {},
 ): Promise<LoadedVectorStore> {
+  const intermediateDir = resolveIntermediateDir(options.intermediateDir);
+  const vectorStore = options.vectorStore ?? DEFAULT_VECTOR_STORE;
+  if (intermediateDir) {
+    const cached = await tryLoadVectorStoreCache(embConfig, vectorStore, intermediateDir).catch(
+      (err) => {
+        options.onWarning?.(
+          `[intermediate] 中间态缓存不可用，回退到 NDJSON: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return undefined;
+      },
+    );
+    if (cached) return cached;
+  }
+
   let meta: StoreMeta | undefined;
   const records: LoadedVectorStoreRecord[] = [];
+  const vectors: number[][] = [];
 
   for await (const record of streamVectorStoreRecords(embConfig, {
-    vectorStore: options.vectorStore,
+    vectorStore,
     onWarning: options.onWarning,
     onMeta: (value) => {
       meta = value;
     },
   })) {
+    const { embedding, ...rest } = record;
     records.push({
-      ...record,
-      embedding: Float32Array.from(record.embedding),
+      ...rest,
+      embeddingOffset: vectors.length * record.embedding.length,
     });
+    vectors.push(embedding);
   }
 
   if (meta === undefined) {
     fail('向量库缺少 _meta 元数据，文件格式不正确，请重新生成向量库');
   }
-  return { meta, records };
+  const embeddings = new Float32Array(records.length * meta.dim);
+  for (let i = 0; i < vectors.length; i++) {
+    embeddings.set(vectors[i], i * meta.dim);
+    records[i].embeddingOffset = i * meta.dim;
+  }
+  const store = { meta, records, embeddings };
+  if (intermediateDir) {
+    await writeLoadedVectorStoreCache(store, vectorStore, intermediateDir).catch((err) => {
+      options.onWarning?.(
+        `[intermediate] 写入中间态缓存失败: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+  }
+  return store;
 }
 
 export async function readEmbeddingCache(
   config: EmbeddingConfig,
   vectorStore = DEFAULT_VECTOR_STORE,
+  intermediateDir?: string,
 ): Promise<Map<string, number[]>> {
   if (!(await canAccessVectorStore(vectorStore))) {
     return new Map();
+  }
+  const resolvedIntermediateDir = resolveIntermediateDir(intermediateDir);
+  if (resolvedIntermediateDir) {
+    const cachedStore = await tryLoadVectorStoreCache(
+      config,
+      vectorStore,
+      resolvedIntermediateDir,
+    ).catch(() => undefined);
+    if (cachedStore) {
+      const cache = new Map<string, number[]>();
+      for (const record of cachedStore.records) {
+        if (!record.hash) continue;
+        cache.set(
+          record.hash,
+          Array.from(
+            cachedStore.embeddings.subarray(
+              record.embeddingOffset,
+              record.embeddingOffset + cachedStore.meta.dim,
+            ),
+          ),
+        );
+      }
+      return cache;
+    }
   }
 
   const cache = new Map<string, number[]>();
@@ -361,24 +634,11 @@ export async function writeVectorStore(
   meta: StoreMeta,
   records: readonly object[],
   vectorStore = DEFAULT_VECTOR_STORE,
+  options: WriteVectorStoreOptions = {},
 ): Promise<void> {
-  await fs.mkdir(path.dirname(vectorStore), { recursive: true });
-  const tmp = `${vectorStore}.${randomUUID()}.tmp`;
-  const out = createWriteStream(tmp, { encoding: 'utf-8' });
-
-  const writeLine = async (line: string): Promise<void> => {
-    if (!out.write(`${line}\n`)) await once(out, 'drain');
-  };
-
-  try {
-    await writeLine(JSON.stringify({ _meta: meta }));
-    for (const record of records) await writeLine(JSON.stringify(record));
-    out.end();
-    await once(out, 'finish');
-  } catch (err) {
-    out.destroy();
-    await fs.unlink(tmp).catch(() => {});
-    throw err;
+  await writeJsonLinesAtomic(vectorStore, vectorStoreJsonLines(meta, records));
+  const intermediateDir = resolveIntermediateDir(options.intermediateDir);
+  if (intermediateDir) {
+    await writeVectorStoreCacheFromRecords(meta, records, vectorStore, intermediateDir);
   }
-  await fs.rename(tmp, vectorStore);
 }

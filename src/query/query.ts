@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { buildContext, buildMessages, resolvePromptOptions } from './prompt';
 import { resolveSearchOptions, searchVectorStore, selectDiverseHits } from './retrieval';
-import { hasValidEmbedding, invariant, normalize } from '../utils/index';
+import { hasValidEmbedding, invariant, normalizeToFloat32 } from '../utils/index';
 import type { QueryOptions, QueryResult, RetrieverSearchOptions, SearchHit } from './types';
 
 function pickRetrieverSearchOptions(options: Required<RetrieverSearchOptions>): RetrieverSearchOptions {
@@ -67,7 +67,7 @@ export async function query(question: string, options: QueryOptions): Promise<Qu
   const embeddingStartedAt = performance.now();
   const [questionRaw] = await options.embed([trimmedQuestion]);
   invariant(!hasValidEmbedding(questionRaw), '[query] 问题没有得到合法 embedding');
-  const questionEmbedding = normalize(questionRaw);
+  const questionEmbedding = normalizeToFloat32(questionRaw);
   const embeddingElapsedMs = performance.now() - embeddingStartedAt;
 
   const searchStartedAt = performance.now();

@@ -28,6 +28,7 @@ export interface RankingOptions {
 
 export interface VectorStoreOptions {
   vectorStore?: string;
+  intermediateDir?: string;
   onWarning?: (message: string) => void;
 }
 
@@ -44,7 +45,7 @@ export interface VectorStoreRetriever {
   meta: StoreMeta;
   recordCount: number;
   search(
-    queryEmbedding: readonly number[],
+    queryEmbedding: ArrayLike<number>,
     queryText: string,
     options?: RetrieverSearchOptions,
   ): SearchResult;

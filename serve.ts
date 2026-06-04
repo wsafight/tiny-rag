@@ -136,9 +136,11 @@ function getProviderRuntimeOptions(): ProviderRuntimeOptions {
 function getSearchDefaults(): Required<Pick<
   SearchOptions,
   'vectorStore' | 'topK' | 'minScore' | 'perSourceLimit' | 'keywordWeight' | 'keywordHeadingWeight'
->> {
+>> &
+  Pick<SearchOptions, 'intermediateDir'> {
   return {
     vectorStore: envString('VECTOR_STORE', DEFAULT_QUERY_VECTOR_STORE),
+    intermediateDir: envString('INTERMEDIATE_DIR') || undefined,
     topK: envInteger('TOP_K', DEFAULT_TOP_K, { min: 1 }),
     minScore: envNumber('MIN_SCORE', DEFAULT_MIN_SCORE, { min: -1, max: 1 }),
     perSourceLimit: envInteger('PER_SOURCE_LIMIT', DEFAULT_PER_SOURCE_LIMIT, { min: 1 }),

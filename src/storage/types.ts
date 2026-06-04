@@ -15,6 +15,7 @@ export interface StoreMeta {
   chunkSize: number;
   chunkOverlap: number;
   headingWeight?: number;
+  ingestFingerprint?: string;
   createdAt: string;
 }
 

@@ -15,7 +15,6 @@
 // 本文件只导出可复用函数；CLI 负责读取环境变量和打印进度。
 // -----------------------------------------------------------------------------
 
-import crypto from 'node:crypto';
 import {
   DEFAULT_DOCUMENTS_DIR,
   DEFAULT_VECTOR_STORE,
@@ -24,12 +23,19 @@ import {
 import { splitSemantic } from './chunking';
 import { loadDocuments, normalizeDocumentExtensions } from './documents';
 import { buildKeywordStats } from '../query/keyword';
-import { readEmbeddingCache, writeVectorStore } from '../storage/vector-store';
+import {
+  clearIntermediateCache,
+  readEmbeddingCache,
+  readVectorStoreMeta,
+  writeVectorStore,
+} from '../storage/vector-store';
 import {
   invariant,
   normalize,
   hasValidEmbedding,
   runWithConcurrency,
+  createSha1,
+  updateHashWithJson,
 } from '../utils/index';
 import {
   assertLessThan,
@@ -59,6 +65,7 @@ export const DEFAULT_INGEST_CONCURRENCY = 1;
 interface ResolvedIngestOptions {
   documentsDir: string;
   vectorStore: string;
+  intermediateDir?: string;
   documentExtensions: string[];
   sourceRoot: string;
   excludeSources: readonly string[];
@@ -79,6 +86,49 @@ interface BuildChunkRecordsOptions {
   chunkOverlap?: number;
   chunkDocument?: ChunkDocumentFunction;
   headingWeight?: number;
+}
+
+function buildIngestFingerprint(
+  chunks: readonly ChunkRecord[],
+  resolved: ResolvedIngestOptions,
+): string {
+  const hash = createSha1();
+  updateHashWithJson(hash, {
+    fingerprintVersion: 1,
+    schemaVersion: VECTOR_STORE_SCHEMA_VERSION,
+    provider: resolved.embeddingConfig.provider,
+    model: resolved.embeddingConfig.model,
+    chunkSize: resolved.chunkSize,
+    chunkOverlap: resolved.chunkOverlap,
+    headingWeight: resolved.headingWeight,
+  });
+
+  for (const chunk of chunks) {
+    updateHashWithJson(hash, {
+      id: chunk.id,
+      source: chunk.source,
+      chunkIndex: chunk.chunkIndex,
+      hash: chunk.hash,
+      keywordHeadingTerms: chunk.keywordHeadingTerms,
+      keywordHeadingTokenCount: chunk.keywordHeadingTokenCount,
+      keywordContentTerms: chunk.keywordContentTerms,
+      keywordContentTokenCount: chunk.keywordContentTokenCount,
+    });
+  }
+  return hash.digest('hex');
+}
+
+async function readUnchangedVectorStoreMeta(
+  config: EmbeddingConfig,
+  vectorStore: string,
+  ingestFingerprint: string,
+): Promise<IngestResult['meta'] | undefined> {
+  try {
+    const meta = await readVectorStoreMeta(config, vectorStore);
+    return meta.ingestFingerprint === ingestFingerprint ? meta : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function buildEmbeddingText(heading: string, content: string, headingWeight = 1): string {
@@ -106,6 +156,7 @@ function resolveIngestOptions(options: IngestOptions): ResolvedIngestOptions {
   return {
     documentsDir: options.documentsDir ?? DEFAULT_DOCUMENTS_DIR,
     vectorStore: options.vectorStore ?? DEFAULT_VECTOR_STORE,
+    intermediateDir: options.intermediateDir,
     documentExtensions: normalizeDocumentExtensions(options.documentExtensions),
     sourceRoot: options.sourceRoot ?? options.documentsDir ?? DEFAULT_DOCUMENTS_DIR,
     excludeSources: options.excludeSources ?? [],
@@ -145,7 +196,7 @@ export function buildChunkRecords(
     pieces.forEach((piece, index) => {
       const embeddingText = buildEmbeddingText(piece.heading, piece.content, headingWeight);
       const keywordStats = buildKeywordStats(piece.heading, piece.content);
-      const hash = crypto.createHash('sha1').update(embeddingText).digest('hex');
+      const hash = createSha1().update(embeddingText).digest('hex');
       records.push({
         id: `${doc.source}#${index}`,
         source: doc.source,
@@ -213,8 +264,30 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
     };
   }
 
+  const ingestFingerprint = buildIngestFingerprint(chunks, resolved);
+  const unchangedMeta = await readUnchangedVectorStoreMeta(
+    config,
+    resolved.vectorStore,
+    ingestFingerprint,
+  );
+  if (unchangedMeta) {
+    return {
+      embeddingConfig: config,
+      documentsDir: resolved.documentsDir,
+      vectorStore: resolved.vectorStore,
+      docsCount: docs.length,
+      chunksCount: chunks.length,
+      cachedCount: chunks.length,
+      embeddedCount: 0,
+      meta: unchangedMeta,
+      skippedReason: 'unchanged',
+    };
+  }
+
+  await clearIntermediateCache(resolved.intermediateDir);
+
   // 命中缓存的 chunk 直接复用旧向量；剩下的再分批请求 embedding
-  const cache = await readEmbeddingCache(config, resolved.vectorStore);
+  const cache = await readEmbeddingCache(config, resolved.vectorStore, resolved.intermediateDir);
   const records: PendingVectorRecord[] = chunks.map((c) => {
     const cached = cache.get(c.hash);
     return { ...c, embedding: hasValidEmbedding(cached) ? cached : null };
@@ -277,10 +350,13 @@ export async function ingest(options: IngestOptions): Promise<IngestResult> {
     chunkSize: resolved.chunkSize,
     chunkOverlap: resolved.chunkOverlap,
     headingWeight: resolved.headingWeight,
+    ingestFingerprint,
     createdAt: new Date().toISOString(),
   };
 
-  await writeVectorStore(meta, records, resolved.vectorStore);
+  await writeVectorStore(meta, records, resolved.vectorStore, {
+    intermediateDir: resolved.intermediateDir,
+  });
   resolved.onProgress?.({
     type: 'written',
     vectorStore: resolved.vectorStore,

@@ -1,19 +1,20 @@
-// test/bench.test.ts
+// bench/bench.ts
 // -----------------------------------------------------------------------------
 // 性能基准测试：用合成数据测量「向量库写入 / 加载 / 查询」的耗时与内存占用。
 //
 // 设计目标（详见根目录 PERFORMANCE.md）：
 //   1) 在改动检索/存储相关代码前后，能够稳定复现量级；
 //   2) 不依赖任何外部 LLM / Embedding 服务，全部用确定性合成向量；
-//   3) 默认跳过，避免 `npm test` 跑得太慢；通过 `BENCH=1 npm test` 显式启用。
+//   3) 独立于 test runner，通过 `pnpm bench` 显式启用。
 //
 // 跑法：
-//   BENCH=1 npm test                              # 跑基准（默认追加历史 + 自动 vs baseline）
-//   BENCH=1 BENCH_SIZES=1000,10000 npm test       # 自定义档位
-//   BENCH=1 BENCH_DIM=768 npm test                # 自定义向量维度
-//   BENCH=1 BENCH_LABEL="after-p0" npm test       # 给本次跑打标签，写入历史时一起记录
-//   BENCH=1 BENCH_BASELINE_SAVE=1 npm test        # 把本次结果保存为基线（不会自动覆盖）
-//   BENCH=1 BENCH_NO_LOG=1 npm test               # 临时禁用历史追加
+//   pnpm bench                                    # 跑基准（默认追加历史 + 自动 vs baseline）
+//   BENCH_SIZES=1000,10000 pnpm bench             # 自定义档位
+//   BENCH_DIM=768 pnpm bench                      # 自定义向量维度
+//   BENCH_LABEL="after-p0" pnpm bench             # 给本次跑打标签，写入历史时一起记录
+//   BENCH_BASELINE_SAVE=1 pnpm bench              # 把本次结果保存为基线（不会自动覆盖）
+//   BENCH_NO_LOG=1 pnpm bench                     # 临时禁用历史追加
+//   INTERMEDIATE_DIR=./.tiny-rag-cache pnpm bench # 启用中间态缓存加载路径
 //
 // 产出文件（均放在仓库根目录的 `bench/` 下，已加入 .gitignore 建议中）：
 //   - bench/history.jsonl     每次跑追加一行 JSON
@@ -25,7 +26,6 @@ import { tmpdir } from 'node:os';
 import os from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { test } from 'node:test';
 
 import { writeVectorStore, loadVectorStore } from '../src/storage/vector-store';
 import { createLoadedRetriever } from '../src/query/retrieval';
@@ -35,9 +35,6 @@ import type { EmbeddingConfig } from '../src/types';
 import type { StoreMeta } from '../src/storage/types';
 
 // ----------------------------- 配置参数 -----------------------------
-
-/** 是否启用基准测试（默认关闭，避免 CI / 日常 npm test 跑得太慢）。 */
-const BENCH_ENABLED = process.env.BENCH === '1' || process.env.BENCH === 'true';
 
 /** 基准档位：默认覆盖 1k / 1w，避免 50k 跑太久；可通过 BENCH_SIZES 覆盖。 */
 const BENCH_SIZES: number[] = (process.env.BENCH_SIZES ?? '1000,10000')
@@ -64,6 +61,9 @@ const BENCH_BASELINE_SAVE =
 
 /** 是否禁用历史追加（默认追加）。 */
 const BENCH_NO_LOG = process.env.BENCH_NO_LOG === '1' || process.env.BENCH_NO_LOG === 'true';
+
+/** 可选中间态缓存目录；留空时 bench 仍走纯 NDJSON 加载路径。 */
+const BENCH_INTERMEDIATE_DIR = process.env.INTERMEDIATE_DIR?.trim() || undefined;
 
 /** 历史与基线文件的存放目录（仓库根 / bench/），便于 git 管理或忽略。 */
 const BENCH_DIR = resolve(process.cwd(), 'bench');
@@ -107,6 +107,7 @@ interface BenchRun {
     sizes: number[];
     dim: number;
     queryTimes: number;
+    intermediateDir?: string;
   };
   metrics: BenchMetrics[];
 }
@@ -196,7 +197,9 @@ async function buildBenchStore(
     };
   }
 
-  await writeVectorStore(meta, records, vectorStore);
+  await writeVectorStore(meta, records, vectorStore, {
+    intermediateDir: BENCH_INTERMEDIATE_DIR,
+  });
   return { vectorStore, meta };
 }
 
@@ -292,11 +295,9 @@ function printDelta(current: BenchMetrics, baseline: BenchMetrics): void {
   fmt('rss after (MB)', current.rssAfterMB, baseline.rssAfterMB, ' MB');
 }
 
-// ----------------------------- 实际基准用例 -----------------------------
+// ----------------------------- 实际基准流程 -----------------------------
 
-const runOrSkip = BENCH_ENABLED ? test : test.skip;
-
-runOrSkip('bench: 向量库写入 / 加载 / 查询', async (t) => {
+async function runBench(): Promise<void> {
   // 跑前打印 header（含时间戳、环境信息），保证终端 / 日志重定向都能看到
   const startedAt = new Date();
   const cpuModel = os.cpus()?.[0]?.model ?? 'unknown';
@@ -312,6 +313,7 @@ runOrSkip('bench: 向量库写入 / 加载 / 查询', async (t) => {
       `[bench] cpu="${cpuModel}" x${cpuCount}  totalMem=${totalMemMB} MB`,
       `[bench] sizes=${BENCH_SIZES.join(',')} dim=${BENCH_DIM} queryTimes=${QUERY_TIMES}` +
         (BENCH_LABEL ? `  label="${BENCH_LABEL}"` : ''),
+      `[bench] intermediateDir=${BENCH_INTERMEDIATE_DIR ?? '(disabled)'}`,
       '',
     ].join('\n'),
   );
@@ -331,78 +333,79 @@ runOrSkip('bench: 向量库写入 / 加载 / 查询', async (t) => {
 
   try {
     for (const size of BENCH_SIZES) {
-      await t.test(`size=${size}`, async () => {
-        const rssBefore = rssMB();
+      const rssBefore = rssMB();
 
-        // 1) 写盘耗时
-        const { ms: writeMs, result: built } = await timed(() =>
-          buildBenchStore(dir, size, BENCH_DIM),
+      // 1) 写盘耗时
+      const { ms: writeMs, result: built } = await timed(() =>
+        buildBenchStore(dir, size, BENCH_DIM),
+      );
+
+      // 2) 冷启动加载耗时
+      const { ms: loadMs, result: store } = await timed(() =>
+        loadVectorStore(embeddingConfig, {
+          vectorStore: built.vectorStore,
+          intermediateDir: BENCH_INTERMEDIATE_DIR,
+        }),
+      );
+
+      const rssAfterLoad = rssMB();
+
+      // 3) 构造一次 retriever（构建期开销）
+      const { ms: retrieverMs, result: retriever } = await timed(() =>
+        createLoadedRetriever(embeddingConfig, store, { topK: 4, perSourceLimit: 2 }),
+      );
+
+      // 4) 查询耗时（多次取均值，分别测试 keywordWeight=0 / 0.3）
+      const rng = createRng(size + 7);
+      const queryEmbedding = makeRandomVector(BENCH_DIM, rng);
+      const queryText = '缓存策略 优化 cache index';
+
+      let vectorOnlyTotal = 0;
+      let hybridTotal = 0;
+      for (let i = 0; i < QUERY_TIMES; i++) {
+        const { ms: vMs } = await timed(() =>
+          retriever.search(queryEmbedding, queryText, { keywordWeight: 0 }),
         );
-
-        // 2) 冷启动加载耗时
-        const { ms: loadMs, result: store } = await timed(() =>
-          loadVectorStore(embeddingConfig, { vectorStore: built.vectorStore }),
+        const { ms: hMs } = await timed(() =>
+          retriever.search(queryEmbedding, queryText, { keywordWeight: 0.3 }),
         );
+        vectorOnlyTotal += vMs;
+        hybridTotal += hMs;
+      }
+      const vectorOnlyAvg = vectorOnlyTotal / QUERY_TIMES;
+      const hybridAvg = hybridTotal / QUERY_TIMES;
 
-        const rssAfterLoad = rssMB();
+      const m: BenchMetrics = {
+        size,
+        writeMs,
+        loadMs,
+        retrieverMs,
+        vectorOnlyAvgMs: vectorOnlyAvg,
+        hybridAvgMs: hybridAvg,
+        rssBeforeMB: rssBefore,
+        rssAfterMB: rssAfterLoad,
+        recordsLoaded: store.records.length,
+      };
+      metricsList.push(m);
 
-        // 3) 构造一次 retriever（构建期开销）
-        const { ms: retrieverMs, result: retriever } = await timed(() =>
-          createLoadedRetriever(embeddingConfig, store, { topK: 4, perSourceLimit: 2 }),
-        );
-
-        // 4) 查询耗时（多次取均值，分别测试 keywordWeight=0 / 0.3）
-        const rng = createRng(size + 7);
-        const queryEmbedding = makeRandomVector(BENCH_DIM, rng);
-        const queryText = '缓存策略 优化 cache index';
-
-        let vectorOnlyTotal = 0;
-        let hybridTotal = 0;
-        for (let i = 0; i < QUERY_TIMES; i++) {
-          const { ms: vMs } = await timed(() =>
-            retriever.search(queryEmbedding, queryText, { keywordWeight: 0 }),
-          );
-          const { ms: hMs } = await timed(() =>
-            retriever.search(queryEmbedding, queryText, { keywordWeight: 0.3 }),
-          );
-          vectorOnlyTotal += vMs;
-          hybridTotal += hMs;
-        }
-        const vectorOnlyAvg = vectorOnlyTotal / QUERY_TIMES;
-        const hybridAvg = hybridTotal / QUERY_TIMES;
-
-        const m: BenchMetrics = {
-          size,
-          writeMs,
-          loadMs,
-          retrieverMs,
-          vectorOnlyAvgMs: vectorOnlyAvg,
-          hybridAvgMs: hybridAvg,
-          rssBeforeMB: rssBefore,
-          rssAfterMB: rssAfterLoad,
-          recordsLoaded: store.records.length,
-        };
-        metricsList.push(m);
-
-        // ----------------------------- 报表输出 -----------------------------
-        // eslint-disable-next-line no-console
-        console.log(`\n[bench] chunks=${size}`);
-        const baseSame = baseline?.metrics.find((b) => b.size === size);
-        if (baseSame) {
-          // 有基线 → 输出 delta 表（同时保留绝对值）
-          printDelta(m, baseSame);
-          printRow('records loaded', String(m.recordsLoaded));
-        } else {
-          // 没有基线 → 只打印当前绝对值
-          printRow('write store (ms)', writeMs.toFixed(1));
-          printRow('cold load (ms)', loadMs.toFixed(1));
-          printRow('build retriever (ms)', retrieverMs.toFixed(2));
-          printRow('query vector-only avg (ms)', vectorOnlyAvg.toFixed(2));
-          printRow('query hybrid avg (ms)', hybridAvg.toFixed(2));
-          printRow('rss before / after (MB)', `${rssBefore} -> ${rssAfterLoad}`);
-          printRow('records loaded', String(m.recordsLoaded));
-        }
-      });
+      // ----------------------------- 报表输出 -----------------------------
+      // eslint-disable-next-line no-console
+      console.log(`\n[bench] chunks=${size}`);
+      const baseSame = baseline?.metrics.find((b) => b.size === size);
+      if (baseSame) {
+        // 有基线 → 输出 delta 表（同时保留绝对值）
+        printDelta(m, baseSame);
+        printRow('records loaded', String(m.recordsLoaded));
+      } else {
+        // 没有基线 → 只打印当前绝对值
+        printRow('write store (ms)', writeMs.toFixed(1));
+        printRow('cold load (ms)', loadMs.toFixed(1));
+        printRow('build retriever (ms)', retrieverMs.toFixed(2));
+        printRow('query vector-only avg (ms)', vectorOnlyAvg.toFixed(2));
+        printRow('query hybrid avg (ms)', hybridAvg.toFixed(2));
+        printRow('rss before / after (MB)', `${rssBefore} -> ${rssAfterLoad}`);
+        printRow('records loaded', String(m.recordsLoaded));
+      }
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -422,6 +425,7 @@ runOrSkip('bench: 向量库写入 / 加载 / 查询', async (t) => {
       sizes: BENCH_SIZES,
       dim: BENCH_DIM,
       queryTimes: QUERY_TIMES,
+      ...(BENCH_INTERMEDIATE_DIR ? { intermediateDir: BENCH_INTERMEDIATE_DIR } : {}),
     },
     metrics: metricsList,
   };
@@ -442,4 +446,6 @@ runOrSkip('bench: 向量库写入 / 加载 / 查询', async (t) => {
       `[bench] no baseline yet. Run with BENCH_BASELINE_SAVE=1 to save current run as baseline.`,
     );
   }
-});
+}
+
+await runBench();

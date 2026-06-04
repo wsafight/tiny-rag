@@ -48,6 +48,7 @@ export interface IngestOptions {
   embed: EmbedFunction;
   documentsDir?: string;
   vectorStore?: string;
+  intermediateDir?: string;
   documentExtensions?: readonly string[];
   sourceRoot?: string;
   excludeSources?: readonly string[];
@@ -70,5 +71,5 @@ export interface IngestResult {
   cachedCount: number;
   embeddedCount: number;
   meta?: StoreMeta;
-  skippedReason?: 'no-docs' | 'no-chunks';
+  skippedReason?: 'no-docs' | 'no-chunks' | 'unchanged';
 }

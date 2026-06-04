@@ -1,7 +1,7 @@
 // test/utils.test.ts
 // -----------------------------------------------------------------------------
 // 使用 Node 内置 test runner 覆盖 src/utils.ts 的关键工具函数。
-// 跑测：npm test
+// 跑测：pnpm test
 // -----------------------------------------------------------------------------
 
 import { test } from 'node:test';
@@ -11,6 +11,7 @@ import {
   dot,
   fail,
   normalize,
+  normalizeToFloat32,
   hasValidEmbedding,
   invariant,
   runWithConcurrency,
@@ -23,8 +24,21 @@ import {
   envString,
 } from '../runtime/env';
 import { splitByLength, splitSemantic } from '../src/ingestion/chunking';
+import {
+  buildChunkRecords,
+  buildEmbeddingText,
+} from '../src/ingestion/ingest';
+import { normalizeDocumentExtensions } from '../src/ingestion/documents';
 import { VECTOR_STORE_SCHEMA_VERSION } from '../src/constants/index';
-import { selectDiverseHits } from '../src/query/retrieval';
+import {
+  resolveRankingOptions,
+  selectDiverseHits,
+} from '../src/query/retrieval';
+import {
+  buildContext,
+  buildMessages,
+  resolvePromptOptions,
+} from '../src/query/prompt';
 
 // ----------------------------- dot -----------------------------
 
@@ -63,6 +77,17 @@ test('normalize: 零向量原样返回（拷贝）', () => {
   const out = normalize(input);
   assert.deepEqual(out, [0, 0, 0]);
   assert.notEqual(out, input, '应返回新数组而非原引用');
+});
+
+test('normalizeToFloat32: 返回 typed array 并保持零向量拷贝语义', () => {
+  const v = normalizeToFloat32([3, 4]);
+  assert.ok(v instanceof Float32Array);
+  assert.ok(Math.abs(v[0] - 0.6) < 1e-6);
+  assert.ok(Math.abs(v[1] - 0.8) < 1e-6);
+
+  const zero = normalizeToFloat32([0, 0]);
+  assert.ok(zero instanceof Float32Array);
+  assert.deepEqual([...zero], [0, 0]);
 });
 
 // ----------------------------- splitByLength -----------------------------
@@ -277,6 +302,90 @@ test('envBoolean: 支持常见开关写法', () => {
     () => envBoolean({ TINY_RAG_TEST_BOOLEAN: 'maybe' }, 'TINY_RAG_TEST_BOOLEAN', true),
     /必须是/,
   );
+});
+
+// ----------------------------- prompt helpers -----------------------------
+
+test('resolvePromptOptions/buildMessages: 默认提示词与自定义标签', () => {
+  const defaults = resolvePromptOptions({ unknownAnswer: '不知道' });
+  assert.match(defaults.systemPrompt, /不知道/);
+  assert.equal(defaults.contextLabel, '参考内容');
+  assert.equal(defaults.questionLabel, '问题');
+
+  const messages = buildMessages('context text', 'question text', {
+    systemPrompt: 'system',
+    contextLabel: 'CTX',
+    questionLabel: 'Q',
+  });
+  assert.deepEqual(messages, [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: 'CTX：\ncontext text\n\nQ：\nquestion text' },
+  ]);
+});
+
+test('buildContext: 带编号、source、heading，空 heading 时不输出 heading 行', () => {
+  const context = buildContext([
+    { source: 'a.md', heading: 'H', content: 'A content' },
+    { source: 'b.md', heading: '', content: 'B content' },
+  ]);
+
+  assert.match(context, /\[1\] source=a\.md\nheading=H\nA content/);
+  assert.match(context, /\[2\] source=b\.md\nB content/);
+  assert.doesNotMatch(context, /\[2\] source=b\.md\nheading=/);
+});
+
+// ----------------------------- ranking/document helpers -----------------------------
+
+test('resolveRankingOptions: 默认值和范围校验', () => {
+  assert.deepEqual(resolveRankingOptions(), {
+    topK: 4,
+    minScore: 0,
+    perSourceLimit: 2,
+    keywordWeight: 0.3,
+    keywordHeadingWeight: 2,
+  });
+  assert.throws(() => resolveRankingOptions({ topK: 0 }), /topK/);
+  assert.throws(() => resolveRankingOptions({ minScore: 2 }), /minScore/);
+  assert.throws(() => resolveRankingOptions({ keywordWeight: -0.1 }), /keywordWeight/);
+  assert.throws(
+    () => resolveRankingOptions({ keywordHeadingWeight: -1 }),
+    /keywordHeadingWeight/,
+  );
+});
+
+test('normalizeDocumentExtensions: 去重、补点、转小写并拒绝空列表', () => {
+  assert.deepEqual(normalizeDocumentExtensions([' MD ', '.txt', 'md', '']), ['.md', '.txt']);
+  assert.throws(() => normalizeDocumentExtensions([' ', '']), /documentExtensions/);
+});
+
+test('buildEmbeddingText: 按 headingWeight 重复标题并处理空标题', () => {
+  assert.equal(buildEmbeddingText(' Cache ', ' content ', 2.8), 'Cache\nCache\ncontent');
+  assert.equal(buildEmbeddingText('Cache', 'content', 0), 'content');
+  assert.equal(buildEmbeddingText('', ' content ', 3), 'content');
+});
+
+test('buildChunkRecords: 生成稳定 id/hash/keyword stats 并支持自定义 chunkDocument', () => {
+  const records = buildChunkRecords(
+    [{ source: 'doc.md', content: '# Cache\n\nCache ttl.' }],
+    {
+      chunkSize: 100,
+      chunkOverlap: 10,
+      headingWeight: 1,
+      chunkDocument: () => [
+        { heading: 'Cache', content: 'Cache ttl.' },
+        { heading: '', content: 'Second chunk.' },
+      ],
+    },
+  );
+
+  assert.equal(records.length, 2);
+  assert.equal(records[0].id, 'doc.md#0');
+  assert.equal(records[1].id, 'doc.md#1');
+  assert.equal(records[0].embeddingText, 'Cache\nCache ttl.');
+  assert.match(records[0].hash, /^[0-9a-f]{40}$/);
+  assert.notEqual(records[0].hash, records[1].hash);
+  assert.deepEqual(records[0].keywordHeadingTerms, [['cache', 1]]);
+  assert.ok(records[0].keywordContentTerms?.some(([term]) => term === 'cache'));
 });
 
 // ----------------------------- runWithConcurrency -----------------------------

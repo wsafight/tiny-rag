@@ -2,6 +2,7 @@ node_modules
 .env
 vector-store*.json
 vector-store*.ndjson
+.tiny-rag-cache/
 .DS_Store
 documents/
 

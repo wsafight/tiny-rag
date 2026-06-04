@@ -37,6 +37,7 @@ interface ResolvedRankingOptions {
 
 interface ResolvedSearchOptions extends ResolvedRankingOptions {
   vectorStore: string;
+  intermediateDir?: string;
   embeddingConfig: EmbeddingConfig;
   onWarning?: SearchOptions['onWarning'];
 }
@@ -54,9 +55,18 @@ interface IndexedVectorStoreRecord extends LoadedVectorStoreRecord {
   keyword: IndexedKeywordStats;
 }
 
+interface IndexedKeywordCorpusStats {
+  contentDocFreqs: ReadonlyMap<string, number>;
+  contentOrHeadingDocFreqs: ReadonlyMap<string, number>;
+  totalContentTokenCount: number;
+  totalHeadingTokenCount: number;
+}
+
 interface IndexedVectorStore {
   meta: StoreMeta;
   records: IndexedVectorStoreRecord[];
+  embeddings: Float32Array;
+  keywordCorpus: IndexedKeywordCorpusStats;
 }
 
 export function resolveRankingOptions(options: RankingOptions = {}): ResolvedRankingOptions {
@@ -87,6 +97,7 @@ export function resolveSearchOptions(
   return {
     ...resolveRankingOptions(options),
     vectorStore: options.vectorStore ?? DEFAULT_QUERY_VECTOR_STORE,
+    intermediateDir: options.intermediateDir,
     embeddingConfig: options.embeddingConfig,
     onWarning: options.onWarning,
   };
@@ -180,12 +191,42 @@ function indexKeywordStats(record: LoadedVectorStoreRecord): IndexedKeywordStats
 }
 
 function createSearchIndex(store: LoadedVectorStore): IndexedVectorStore {
+  let totalContentTokenCount = 0;
+  let totalHeadingTokenCount = 0;
+  const contentDocFreqs = new Map<string, number>();
+  const contentOrHeadingDocFreqs = new Map<string, number>();
+
+  const records = store.records.map((record) => {
+    const keyword = indexKeywordStats(record);
+    totalContentTokenCount += keyword.contentTokenCount;
+    totalHeadingTokenCount += keyword.headingTokenCount;
+
+    const contentOrHeadingTerms = new Set<string>();
+    for (const term of keyword.contentTerms.keys()) {
+      contentDocFreqs.set(term, (contentDocFreqs.get(term) ?? 0) + 1);
+      contentOrHeadingTerms.add(term);
+    }
+    for (const term of keyword.headingTerms.keys()) contentOrHeadingTerms.add(term);
+    for (const term of contentOrHeadingTerms) {
+      contentOrHeadingDocFreqs.set(term, (contentOrHeadingDocFreqs.get(term) ?? 0) + 1);
+    }
+
+    return {
+      ...record,
+      keyword,
+    };
+  });
+
   return {
     meta: store.meta,
-    records: store.records.map((record) => ({
-      ...record,
-      keyword: indexKeywordStats(record),
-    })),
+    records,
+    embeddings: store.embeddings,
+    keywordCorpus: {
+      contentDocFreqs,
+      contentOrHeadingDocFreqs,
+      totalContentTokenCount,
+      totalHeadingTokenCount,
+    },
   };
 }
 
@@ -209,15 +250,24 @@ function getWeightedKeywordTokenCount(
   );
 }
 
-function dotEmbedding(a: readonly number[], b: ArrayLike<number>): number {
+function dotEmbeddingAt(a: ArrayLike<number>, b: ArrayLike<number>, offset: number): number {
   let score = 0;
-  for (let i = 0; i < a.length; i++) score += a[i] * b[i];
+  let i = 0;
+  const limit = a.length - (a.length % 4);
+  for (; i < limit; i += 4) {
+    score +=
+      a[i] * b[offset + i] +
+      a[i + 1] * b[offset + i + 1] +
+      a[i + 2] * b[offset + i + 2] +
+      a[i + 3] * b[offset + i + 3];
+  }
+  for (; i < a.length; i++) score += a[i] * b[offset + i];
   return score;
 }
 
 function scoreLoadedVectorStore(
   store: IndexedVectorStore,
-  queryEmbedding: readonly number[],
+  queryEmbedding: ArrayLike<number>,
   queryText: string,
   resolved: ResolvedRankingOptions,
 ): SearchResult {
@@ -231,21 +281,26 @@ function scoreLoadedVectorStore(
   const queryTokens = tokenizeForKeyword(queryText);
   const queryTermCounts = countQueryTokens(queryTokens);
   const queryTerms = [...queryTermCounts.keys()];
-  const useKeyword = resolved.keywordWeight > 0 && queryTerms.length > 0;
+  let useKeyword = resolved.keywordWeight > 0 && queryTerms.length > 0;
   const headingRepeatCount = Math.max(0, Math.floor(resolved.keywordHeadingWeight));
 
-  const docFreqs = new Map<string, number>();
+  let docFreqs: ReadonlyMap<string, number> = store.keywordCorpus.contentDocFreqs;
   let totalTokenCount = 0;
-
   if (useKeyword) {
-    for (const record of store.records) {
-      totalTokenCount += getWeightedKeywordTokenCount(record, headingRepeatCount);
-      for (const term of queryTerms) {
-        if (getWeightedKeywordTermCount(record, term, headingRepeatCount) > 0) {
-          docFreqs.set(term, (docFreqs.get(term) ?? 0) + 1);
-        }
+    docFreqs =
+      headingRepeatCount > 0
+        ? store.keywordCorpus.contentOrHeadingDocFreqs
+        : store.keywordCorpus.contentDocFreqs;
+    useKeyword = false;
+    for (const term of queryTerms) {
+      if ((docFreqs.get(term) ?? 0) > 0) {
+        useKeyword = true;
+        break;
       }
     }
+    totalTokenCount =
+      store.keywordCorpus.totalContentTokenCount +
+      store.keywordCorpus.totalHeadingTokenCount * headingRepeatCount;
   }
 
   const avgTokenCount = useKeyword ? totalTokenCount / store.records.length : 0;
@@ -271,7 +326,7 @@ function scoreLoadedVectorStore(
     const record = store.records[i];
     const rawKeywordScore = rawKeywordScores?.[i] ?? 0;
     const keywordScore = maxKeywordScore > 0 ? rawKeywordScore / maxKeywordScore : 0;
-    const vectorScore = dotEmbedding(queryEmbedding, record.embedding);
+    const vectorScore = dotEmbeddingAt(queryEmbedding, store.embeddings, record.embeddingOffset);
     const vectorWeight = 1 - resolved.keywordWeight;
     const score = vectorWeight * vectorScore + resolved.keywordWeight * keywordScore;
     if (resolved.minScore > 0 && score < resolved.minScore) continue;
@@ -324,6 +379,7 @@ export async function createRetriever(
   const resolved = resolveSearchOptions({ ...options, embeddingConfig: embConfig });
   const store = await loadVectorStore(embConfig, {
     vectorStore: resolved.vectorStore,
+    intermediateDir: resolved.intermediateDir,
     onWarning: resolved.onWarning,
   });
   return createLoadedRetriever(embConfig, store, resolved);
@@ -331,7 +387,7 @@ export async function createRetriever(
 
 export async function searchVectorStore(
   embConfig: EmbeddingConfig,
-  queryEmbedding: readonly number[],
+  queryEmbedding: ArrayLike<number>,
   queryText: string,
   options: SearchOptions = {},
 ): Promise<SearchResult> {
