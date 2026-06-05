@@ -121,6 +121,7 @@ test/           单元测试和库 API 测试
 
 - 修改资料后为什么要重新 `ingest`？
 - 为什么换 embedding 模型必须重建向量库？
+- embedding 为什么能用相似度检索语义接近的片段？
 - `CHUNK_SIZE`、`TOP_K`、`MIN_SCORE`、`KEYWORD_WEIGHT` 分别影响什么？
 - `candidates` 和 `hits` 为什么不是一回事？
 - `vectorScore` 高、`keywordScore` 低时应该怎么判断？

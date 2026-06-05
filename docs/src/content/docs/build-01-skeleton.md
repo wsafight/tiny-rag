@@ -100,34 +100,45 @@ npm install -D tsx typescript @types/node
 ```ts
 // types.ts
 
-/** 从磁盘读到的一份原始文档 */
+/** 从磁盘读到的一份原始文档；这是导入流水线的起点。 */
 export interface SourceDocument {
+  /** 相对路径形式的来源，例如 faq.md；后续会作为 chunk id 的前缀。 */
   source: string;
+  /** 文件里的纯文本内容；这一层不做切块，也不关心 embedding。 */
   content: string;
 }
 
-/** 切块后的一段文本，带标题路径 */
+/** 切块后的一段文本；这是 embedding 和检索共同使用的最小资料单位。 */
 export interface ChunkRecord {
+  /** 稳定 id，通常由 source + chunkIndex 组成，例如 faq.md#0。 */
   id: string;
+  /** 保留原始文档来源，方便命中后回查。 */
   source: string;
+  /** 当前 chunk 在同一 source 内的顺序，从 0 开始。 */
   chunkIndex: number;
+  /** Markdown 标题路径，例如 订单问题 > 取消订单；用于提供语义背景。 */
   heading: string;
+  /** 真正会进入 embedding 和 prompt 的片段正文。 */
   content: string;
 }
 
-/** 写入向量库后，比 ChunkRecord 多了 embedding */
+/** 写入向量库后的记录；比 ChunkRecord 多了可检索的向量坐标。 */
 export interface VectorStoreRecord extends ChunkRecord {
+  /** embedding 模型输出的向量；只有同一模型生成的向量才能互相比较。 */
   embedding: number[];
 }
 
-/** 检索命中后，比 ChunkRecord 多了分数 */
+/** 检索命中的结果；比 ChunkRecord 多了当前问题下的相关性分数。 */
 export interface SearchHit extends ChunkRecord {
+  /** 相似度或融合后的排序分，数值越大越靠前。 */
   score: number;
 }
 
-/** 一条聊天消息 */
+/** 发给聊天模型的一条消息；最后的 prompt 会由多条消息组成。 */
 export interface ChatMessage {
+  /** system 放规则，user 放问题和参考内容，assistant 是模型回答。 */
   role: 'system' | 'user' | 'assistant';
+  /** 这条消息的具体文本。 */
   content: string;
 }
 ```
@@ -144,11 +155,13 @@ export interface ChatMessage {
 // main.ts
 import type { SourceDocument } from './types';
 
+// 先构造一份假的 SourceDocument，验证类型和运行入口都可用。
 const doc: SourceDocument = {
   source: 'hello.md',
   content: '# Hello\n\nmini-rag is ready.',
 };
 
+// 这里只打印 source 和长度；真正读取磁盘文档会放到 B03。
 console.log(`${doc.source}: ${doc.content.length} 字符`);
 ```
 

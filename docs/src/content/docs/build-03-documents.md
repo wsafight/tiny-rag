@@ -66,12 +66,14 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import type { SourceDocument } from './types';
 
+// 默认只读取纯文本资料；后续要支持 PDF/HTML 时也应先转成 SourceDocument。
 const DEFAULT_EXTENSIONS = ['.md', '.txt'];
 
 export async function loadDocuments(
   dir: string,
   extensions: readonly string[] = DEFAULT_EXTENSIONS,
 ): Promise<SourceDocument[]> {
+  // 先递归列出所有文件，再统一过滤和排序，保证不同机器上的导入顺序稳定。
   const files = await walk(dir);
   const matched = files
     .filter((file) => extensions.some((ext) => file.endsWith(ext)))
@@ -80,6 +82,7 @@ export async function loadDocuments(
   const docs: SourceDocument[] = [];
   for (const file of matched) {
     const content = await readFile(file, 'utf8');
+    // source 使用相对路径，并转换成 POSIX 风格，避免把本机绝对路径写进向量库。
     docs.push({ source: toPosix(relative(dir, file)), content });
   }
   return docs;
@@ -91,6 +94,7 @@ async function walk(dir: string): Promise<string[]> {
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
+      // 深度优先递归子目录；最终排序放在 loadDocuments() 里统一处理。
       files.push(...(await walk(full)));
     } else if (entry.isFile()) {
       files.push(full);
@@ -100,6 +104,7 @@ async function walk(dir: string): Promise<string[]> {
 }
 
 function toPosix(p: string): string {
+  // Windows 是反斜杠路径，POSIX 是正斜杠；向量库里统一保存正斜杠。
   return p.split(sep).join('/');
 }
 ```
@@ -130,8 +135,10 @@ printf '# 售后规则\n\n7 天无理由退货。\n' > documents/sub/policy.md
 // main.ts
 import { loadDocuments } from './documents';
 
+// loadDocuments() 返回稳定排序后的 SourceDocument[]。
 const docs = await loadDocuments('./documents');
 for (const doc of docs) {
+  // 打印 source 和长度，先确认读取范围、排序和路径规范化是否符合预期。
   console.log(`${doc.source}  (${doc.content.length} 字符)`);
 }
 ```

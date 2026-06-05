@@ -58,9 +58,12 @@ ingest():  文档目录 → 切块 → embedding → 归一化 → 写入 vector
 const SCHEMA_VERSION = 1;
 
 export function validateMeta(meta: StoreMeta, provider: string, model: string, dim: number): void {
+  // schema 不匹配说明文件格式可能已经变化，继续读会有隐性风险。
   if (meta.version !== SCHEMA_VERSION) throw new Error(`schema 版本不匹配: ${meta.version}`);
+  // provider 和 model 共同决定 embedding 空间，任一不一致都不能比较。
   if (meta.provider !== provider) throw new Error(`provider 不匹配: ${meta.provider} != ${provider}`);
   if (meta.model !== model) throw new Error(`model 不匹配: ${meta.model} != ${model}`);
+  // 维度是最后一道硬约束；维度不同连点积都无法正确计算。
   if (meta.dim !== dim) throw new Error(`维度不匹配: ${meta.dim} != ${dim}`);
 }
 
@@ -83,10 +86,13 @@ export interface LoadedStore {
 }
 
 export async function loadVectorStore(path: string): Promise<LoadedStore> {
+  // mini-rag 先用一次性读取保持代码短；真实项目可以逐行流式读取。
   const text = await readFile(path, 'utf8');
   const lines = text.split('\n').filter(Boolean);
+  // 第一行必须是 _meta，它是查询前做兼容性校验的依据。
   const first = JSON.parse(lines[0]) as { _meta?: StoreMeta };
   if (!first._meta) throw new Error('向量库缺少 _meta');
+  // 其余每行都是一条 VectorStoreRecord。
   const records = lines.slice(1).map((line) => JSON.parse(line) as VectorStoreRecord);
   return { meta: first._meta, records };
 }
@@ -109,12 +115,19 @@ import type { EmbedFunction } from './providers';
 import type { VectorStoreRecord } from './types';
 
 export interface IngestOptions {
+  /** 要导入的文档目录。 */
   documentsDir: string;
+  /** 输出的向量库路径。 */
   storePath: string;
+  /** 外部注入的 embedding 函数，ingest 本身不关心 provider 细节。 */
   embed: EmbedFunction;
+  /** 当前 embedding provider，用于写入 _meta。 */
   provider: string;
+  /** 当前 embedding 模型，用于写入 _meta。 */
   model: string;
+  /** 可选切块上限；不传时使用默认值。 */
   chunkSize?: number;
+  /** 可选硬切 overlap；不传时使用默认值。 */
   chunkOverlap?: number;
 }
 
@@ -122,13 +135,17 @@ export async function ingest(opts: IngestOptions): Promise<number> {
   const chunkSize = opts.chunkSize ?? 600;
   const chunkOverlap = opts.chunkOverlap ?? 80;
 
+  // 导入流水线前半段全是本地文本处理：读文档 -> 切块。
   const docs = await loadDocuments(opts.documentsDir);
   const chunks = buildChunkRecords(docs, chunkSize, chunkOverlap);
+  // 没有 chunk 时直接返回，避免发空 embedding 请求。
   if (chunks.length === 0) return 0;
 
+  // embedding 输入包含 heading + content，让向量带上标题语义。
   const vectors = await opts.embed(chunks.map((c) => `${c.heading}\n${c.content}`));
   const records: VectorStoreRecord[] = chunks.map((chunk, i) => ({
     ...chunk,
+    // 每个向量都在写入前归一化，保证查询阶段相似度计算一致。
     embedding: normalize(vectors[i]),
   }));
 
@@ -141,6 +158,7 @@ export async function ingest(opts: IngestOptions): Promise<number> {
     chunkOverlap,
     createdAt: new Date().toISOString(),
   };
+  // 最终产物始终是完整向量库，而不是只写新增 chunk。
   await writeVectorStore(opts.storePath, meta, records);
   return records.length;
 }
@@ -158,6 +176,7 @@ import { ingest } from './ingest';
 import { createEmbedder } from './providers';
 
 const model = process.env.EMBED_MODEL ?? 'nomic-embed-text';
+// 入口层负责读环境变量和创建 provider，核心 ingest 只接收显式参数。
 const embed = createEmbedder({ baseURL: process.env.BASE_URL ?? 'http://127.0.0.1:1234/v1', model });
 
 const count = await ingest({

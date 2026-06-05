@@ -55,16 +55,20 @@ chunk 文本（heading + content）
 ```ts
 // keyword.ts
 export function tokenize(text: string): string[] {
+  // 统一大小写和空白，确保查询和文档使用完全相同的分词规则。
   const normalized = text.toLowerCase().replace(/[\u3000\s]+/g, ' ').trim();
   if (!normalized) return [];
 
   const tokens: string[] = [];
+  // 连续中文作为一段，连续英文/数字作为一段；标点会被自然跳过。
   const matches = normalized.match(/[\p{Script=Han}]+|[a-z0-9]+/gu) ?? [];
   for (const part of matches) {
     if (/^[\p{Script=Han}]+$/u.test(part)) {
+      // 单个汉字保留原样；多个汉字用 bigram 滑窗切成相邻两字。
       if (part.length === 1) tokens.push(part);
       else for (let i = 0; i < part.length - 1; i++) tokens.push(part.slice(i, i + 2));
     } else {
+      // 英文和数字已经是连续 token，直接加入。
       tokens.push(part);
     }
   }
@@ -89,20 +93,27 @@ BM25 衡量一个查询词对一篇文档的重要性，综合考虑：词频、
 import type { VectorStoreRecord } from './types';
 
 export interface KeywordIndex {
+  /** 每条 chunk 的词频表和 token 总数。 */
   docs: Array<{ tf: Map<string, number>; len: number }>;
+  /** 文档频率：某个 term 出现在多少条 chunk 里。 */
   df: Map<string, number>;
+  /** 平均 chunk 长度，用于 BM25 的长度校正。 */
   avgLen: number;
 }
 
 export function buildKeywordIndex(records: readonly VectorStoreRecord[]): KeywordIndex {
   const df = new Map<string, number>();
   const docs = records.map((r) => {
+    // 标题和正文一起分词，让标题里的主题词也能贡献关键词分。
     const tokens = tokenize(`${r.heading} ${r.content}`);
     const tf = new Map<string, number>();
+    // tf 统计当前 chunk 内每个 term 出现几次。
     for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
+    // df 每个 chunk 只计一次，所以遍历 tf.keys() 而不是 tokens。
     for (const term of tf.keys()) df.set(term, (df.get(term) ?? 0) + 1);
     return { tf, len: tokens.length };
   });
+  // 空语料时用 1 做分母保护，避免 NaN 继续流入打分。
   const avgLen = docs.reduce((s, d) => s + d.len, 0) / Math.max(docs.length, 1);
   return { docs, df, avgLen };
 }
@@ -117,16 +128,20 @@ export function buildKeywordIndex(records: readonly VectorStoreRecord[]): Keywor
 ```ts
 // keyword.ts（续）
 export function scoreBm25(index: KeywordIndex, docIdx: number, queryTerms: readonly string[]): number {
+  // k1 控制词频增长的饱和速度，b 控制文档长度校正强度。
   const k1 = 1.2;
   const b = 0.75;
   const N = index.docs.length;
   const doc = index.docs[docIdx];
   let score = 0;
   for (const term of queryTerms) {
+    // 当前文档没有这个查询词，就没有贡献。
     const f = doc.tf.get(term) ?? 0;
     if (f === 0) continue;
+    // df 越小，说明 term 越稀有，IDF 贡献越大。
     const df = index.df.get(term) ?? 0;
     const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+    // 长文档里出现一次词不如短文档里出现一次词有区分度，所以要做长度校正。
     const denom = f + k1 * (1 - b + (b * doc.len) / index.avgLen);
     score += idf * ((f * (k1 + 1)) / denom);
   }
@@ -147,6 +162,7 @@ import type { VectorStoreRecord } from './types';
 
 const records: VectorStoreRecord[] = [
   {
+    // 第一条包含“退货”字面词，查询相关时 BM25 应该更高。
     id: 'faq.md#0',
     source: 'faq.md',
     chunkIndex: 0,
@@ -155,6 +171,7 @@ const records: VectorStoreRecord[] = [
     embedding: [],
   },
   {
+    // 第二条语义上也许相关，但没有“退货”字面词。
     id: 'faq.md#1',
     source: 'faq.md',
     chunkIndex: 1,
@@ -165,6 +182,7 @@ const records: VectorStoreRecord[] = [
 ];
 
 const index = buildKeywordIndex(records);
+// 查询和文档使用同一个 tokenize()，字面命中才能对齐。
 const terms = tokenize('7 天能退货吗？');
 console.log(terms.join(', '));
 console.log(scoreBm25(index, 0, terms).toFixed(4));

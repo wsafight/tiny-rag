@@ -62,14 +62,20 @@ TopK 的语义也要看清：它只是“当前排序下前 K 个”。如果知
 ```ts
 // vector.ts（续）
 export function dot(a: readonly number[], b: readonly number[]): number {
+  // 点积要求两个向量维度一致；不一致通常说明向量库和查询模型不匹配。
   if (a.length !== b.length) throw new Error('向量维度不一致');
   let s = 0;
+  // 两个向量都已 L2 归一化时，点积就是余弦相似度。
   for (let i = 0; i < a.length; i++) s += a[i] * b[i];
   return s;
 }
 ```
 
 这里继续保持“导入归一化，查询也归一化”的约定。只要向量库里的记录已经归一化，检索时就可以用点积快速比较。后面 tiny-rag 把向量放进 `Float32Array`，也是为了让这个点积循环更快。
+
+:::tip[原理补充：为什么点积可以当相似度]
+余弦相似度本来是 `dot(a, b) / (|a| * |b|)`，比较的是两个向量方向是否接近。导入和查询都做 L2 归一化后，`|a|` 和 `|b|` 都等于 1，公式就只剩 `dot(a, b)`。所以这里的点积不是在比较“文本长度”，而是在比较两个文本在同一向量空间里的方向接近程度。
+:::
 
 ### 2. 检索器
 
@@ -82,21 +88,27 @@ import type { LoadedStore } from './store';
 import type { SearchHit } from './types';
 
 export interface Retriever {
+  /** 输入问题向量和 topK，返回按相似度排序后的命中片段。 */
   search(questionEmbedding: readonly number[], topK: number): SearchHit[];
 }
 
 export function createRetriever(store: LoadedStore): Retriever {
+  // store 被闭包捕获；HTTP 服务可以启动时创建一次 retriever 后反复复用。
   return {
     search(questionEmbedding, topK) {
+      // 查询向量也要归一化，和导入阶段写入的归一化 chunk 向量保持同一尺度。
       const query = normalize([...questionEmbedding]);
       const scored: SearchHit[] = store.records.map((r) => ({
+        // SearchHit 只保留检索和 prompt 需要的字段，不暴露完整存储实现。
         id: r.id,
         source: r.source,
         chunkIndex: r.chunkIndex,
         heading: r.heading,
         content: r.content,
+        // 分数越大，代表当前问题和该 chunk 的向量方向越接近。
         score: dot(query, r.embedding),
       }));
+      // 先全量排序，再取 TopK；学习版用线性扫描保持实现透明。
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, topK);
     },
@@ -125,8 +137,11 @@ export async function searchOnce(
   model: string,
   topK = 4,
 ): Promise<SearchHit[]> {
+  // 每次 searchOnce 都重新加载向量库；后续服务化时会改成启动时加载一次。
   const store = await loadVectorStore(storePath);
+  // 问题必须使用和向量库相同的 embedding 模型转成向量。
   const [questionVec] = await embed([question]);
+  // 拿到问题向量后才知道 dim，才能完整校验 meta。
   validateMeta(store.meta, provider, model, questionVec.length);
   return createRetriever(store).search(questionVec, topK);
 }
@@ -142,11 +157,13 @@ import { searchOnce } from './search';
 import { createEmbedder } from './providers';
 
 const model = process.env.EMBED_MODEL ?? 'nomic-embed-text';
+// 查询问题的 embedder 必须和 ingest 时使用的是同一个模型。
 const embed = createEmbedder({ baseURL: process.env.BASE_URL ?? 'http://127.0.0.1:1234/v1', model });
 
 const hits = await searchOnce('./vector-store.ndjson', '怎么取消订单？', embed, 'lmstudio', model);
 console.log('#  score   source         heading');
 hits.forEach((h, i) => {
+  // 命中表是排查 RAG 的第一现场：先看 source/heading，再看最终回答。
   console.log(`${i + 1}  ${h.score.toFixed(4)}  ${h.source.padEnd(14)} ${h.heading}`);
 });
 ```
