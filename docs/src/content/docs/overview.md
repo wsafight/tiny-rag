@@ -1,9 +1,11 @@
 ---
-title: 概览
+title: RAG 项目概览
 description: 从能力边界、源码目录和学习路径三个角度，读懂 tiny-rag 这个轻量级 RAG 项目的取舍。
 ---
 
 如果只看一句话，RAG（Retrieval-Augmented Generation，检索增强生成）像是“先检索，再回答”：先从你自己的资料里找出相关片段，再把这些片段交给大模型，让它基于这些证据来回答，而不是凭记忆编造。
+
+> **理解阶段**：先建立项目边界和源码地图，再动手读代码。
 
 但一个能稳定运行的小系统，真正难的是把每一步边界定清楚：什么算文档输入，什么算索引，什么算检索结果，什么交给模型生成。
 
@@ -64,13 +66,33 @@ description: 从能力边界、源码目录和学习路径三个角度，读懂 
 如果你是第一次接触 RAG，遇到 embedding、向量、BM25、chunk 这些词不必担心。它们都会在 `B01`–`B10` 里逐个出现并配代码讲解。本章先把它们当成“流程里的角色名”记住即可，需要时也可以随时翻[核心术语速查](/tiny-rag/glossary/)。
 :::
 
+## 怎么解析一次运行结果
+
+tiny-rag 不是只返回一段 `answer`。查询结果里还会暴露 `candidates`、`hits`、`context`、`meta`、各阶段耗时，以及每个命中的 `vectorScore` / `keywordScore`。这些字段是理解 RAG 的关键，因为它们能把“回答不对”拆成更具体的问题。
+
+可以先记住这条判断链：
+
+```text
+answer 错
+  -> context 是否有正确证据
+  -> hits 是否选中了正确片段
+  -> candidates 是否排进了正确片段
+  -> vector-store meta 是否匹配当前 embedding
+  -> chunks 是否保住了答案条件
+  -> documents 是否读到了正确资料
+```
+
+如果正确片段不在 `candidates`，问题多半在导入、切块、embedding 或关键词信号；如果正确片段在 `candidates` 但不在 `hits`，先看 `TOP_K` 和 `PER_SOURCE_LIMIT`；如果 `hits` 正确但回答错，才进入 Prompt、温度和聊天模型能力的排查。
+
+这就是这份文档新增 [诊断与解析方法](/tiny-rag/diagnostics/) 的原因。它把一次查询从 `documents -> chunks -> candidates -> hits -> context -> answer` 串起来，让你能找到第一处证据断裂的位置。
+
 ## 源码目录
 
 ```text
 src/
   constants/    默认常量和 schema 版本
   ingestion/    文档读取、语义切块、导入向量库
-  providers/    embedding/chat 模型服务适配（含 runtime.ts 解析运行时参数）
+  providers/    embedding/chat 模型服务适配（含 provider 运行参数校验）
   query/        检索、Prompt、问答编排
   storage/      NDJSON 向量库读写和中间缓存
   utils/        hash、并发、向量、JSON、校验等通用工具
@@ -85,10 +107,11 @@ test/           单元测试和库 API 测试
 
 这份文档不是从 `src/index.ts` 的导出列表开始逐个 API 讲解，而是带你**从零搭一个简化版 RAG**，再回头对照 tiny-rag 真实源码理解工程取舍：
 
-1. **认识**：先建立项目边界（本章）和架构全景。
-2. **从零构建**：跟着 `B01` 到 `B10`，一章一个里程碑。每章只引入一组关键概念，再写能运行的代码。
-3. **工程化**：理解 CLI / HTTP / 库 API 三种入口，以及配置与调参。
-4. **优化与扩展**：看 tiny-rag 在简化版之上做了哪些优化，以及未来的 TODO。
+1. **认识**：先建立项目边界（本章）和工作流与源码架构。
+2. **诊断**：先读 [诊断与解析方法](/tiny-rag/diagnostics/)，知道后面每个模块的输出该怎么用于排查。
+3. **从零构建**：跟着 `B01` 到 `B10`，一章一个里程碑。每章只引入一组关键概念，再写能运行的代码。
+4. **工程化**：理解 CLI / HTTP / 库 API 三种入口，以及配置与检索调参。
+5. **优化与扩展**：看 tiny-rag 在简化版之上做了哪些优化，以及未来的 TODO。
 
 建议先按顺序读 `B01` 到 `B10`。这十章是一个连续博客系列：每章引入一个新约束，并把它落成可运行代码。读完后再看“接口、配置、优化、扩展”，你会更容易判断哪些设计是为了学习简化，哪些是为了真实使用而补上的工程保护。
 
@@ -99,6 +122,8 @@ test/           单元测试和库 API 测试
 - 修改资料后为什么要重新 `ingest`？
 - 为什么换 embedding 模型必须重建向量库？
 - `CHUNK_SIZE`、`TOP_K`、`MIN_SCORE`、`KEYWORD_WEIGHT` 分别影响什么？
+- `candidates` 和 `hits` 为什么不是一回事？
+- `vectorScore` 高、`keywordScore` 低时应该怎么判断？
 - 为什么查询服务会先 `createRetriever()`，再处理 `/query`？
 - tiny-rag 相比最简实现多做了哪些优化？
 - 如果要加 reranker、接入向量数据库、支持 PDF，应该改哪些模块？

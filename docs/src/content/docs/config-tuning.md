@@ -1,15 +1,33 @@
 ---
-title: 配置与调参
+title: 配置与检索调参
 description: 按现象理解 tiny-rag 的切块、检索、模型和服务参数，建立可复现的 RAG 调参顺序。
 ---
 
-tiny-rag 的配置在 `cli.ts` 和 `serve.ts` 读取（`src/providers/runtime.ts` 负责解析运行时参数），核心库本身不读环境变量。这一章是一份调参速查。
+tiny-rag 的配置在 `cli.ts` 和 `serve.ts` 读取（`runtime/env.ts` 负责环境变量类型解析，`src/providers/runtime.ts` 负责 provider 运行参数的默认值和校验），核心库本身不读环境变量。这一章是一份调参速查。
 
 调 RAG 不应该从“把所有参数试一遍”开始。更有效的方式是先看现象：召回不到、命中了但答案错、服务慢、模型请求不稳，分别对应不同参数。参数表只是索引，真正的顺序是先定位问题属于导入、检索、生成还是运行时。
+
+> **工程化阶段**：先看现象定位到层，再查对应参数，一次只改一个。
 
 :::note[本章目标]
 这一章是**速查 + 排查顺序**，不必从头背到尾。建议先记住一个原则：**先看现象定位到层，再查对应参数**。下面的“现象 → 该调什么”小节，比参数表更适合实际调参时翻阅。
 :::
+
+## 调参前先收集证据
+
+每次调参前，先打开或记录这些字段：
+
+| 字段 | 用来判断 |
+| --- | --- |
+| `candidates` | 正确片段是否被检索器排进候选池 |
+| `hits` | 正确片段是否最终进入 Prompt |
+| `vectorScore` | 语义相似信号是否强 |
+| `keywordScore` | 字面命中信号是否强 |
+| `context` | 模型真正看到的参考内容是否干净 |
+| `meta` | 向量库是否来自当前 embedding 模型和 chunk 参数 |
+| `embeddingElapsedMs` / `searchElapsedMs` / `generationElapsedMs` | 慢在 embedding、检索还是生成 |
+
+没有这些证据，调参很容易变成猜。更完整的排查方法见 [诊断与解析方法](/tiny-rag/diagnostics/)；本章只负责把定位后的问题映射到具体配置。
 
 ## 配置分组
 
@@ -116,10 +134,11 @@ OPENAI_EMBEDDING_MODEL
 
 1. 确认资料里真的写了答案。
 2. 重新运行 `pnpm ingest`。
-3. 用 `pnpm query` 看命中表格。
-4. 如果 source 错，优先调文档标题、切块和关键词权重。
-5. 如果 source 对但回答错，再看 Prompt 和模型。
-6. 如果服务慢，再看 `INTERMEDIATE_DIR`、模型吞吐和并发配置。
+3. 用 `pnpm query` 看命中表格，调试接口时打开 `includeCandidates` / `includeContext`。
+4. 如果正确片段不在 `candidates`，优先看文档标题、切块、embedding 模型和关键词权重。
+5. 如果正确片段在 `candidates` 但不在 `hits`，看 `TOP_K` 和 `PER_SOURCE_LIMIT`。
+6. 如果 `hits` 对但回答错，再看 Prompt、温度和聊天模型。
+7. 如果服务慢，再看 `INTERMEDIATE_DIR`、模型吞吐、并发配置和耗时字段。
 
 :::caution[不要一上来就改 Prompt]
 新手最常见的弯路：回答不对，第一反应是改 system prompt。但 RAG 的问题**大多先出在召回阶段**——命中片段里根本没有答案，再怎么改 Prompt 模型也变不出证据。正确顺序是先看命中表（`source` 对不对、`score` 高不高），确认召回正确后，再去调 Prompt 和模型。

@@ -32,6 +32,7 @@ export default defineConfig({
           items: [
             { label: 'RAG 项目概览', slug: 'overview' },
             { label: '工作流与源码架构', slug: 'architecture' },
+            { label: '诊断与解析方法', slug: 'diagnostics' },
             { label: '核心术语速查', slug: 'glossary' },
           ],
         },

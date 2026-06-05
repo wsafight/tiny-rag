@@ -1,9 +1,11 @@
 ---
-title: 架构全景
+title: 工作流与源码架构
 description: 从分层边界、导入生命周期和查询生命周期三个角度，深度解读 tiny-rag 的 RAG 架构。
 ---
 
 读 RAG 源码时，不要先盯着某个 provider 或某个 Prompt。更稳的方式是先抓住两条流水线：导入阶段如何把文件变成向量库，查询阶段如何把问题变成答案。所有模块都可以放回这两条线里解释。
+
+> **理解阶段**：动手写代码前，先看清数据在导入和查询两条线上怎么流动。
 
 tiny-rag 的架构故意保持克制：入口负责环境，核心库负责纯逻辑，存储和检索之间用明确的数据结构连接。这让它既适合阅读，也留下了替换 provider、向量库和入口形态的空间。
 
@@ -26,7 +28,7 @@ RAG 核心库
   utils/        constants/    types
 ```
 
-最重要的边界是：`src/` 是可复用库代码，`cli.ts` 和 `serve.ts` 才负责读取 `.env`、打印日志、监听 HTTP、处理进程退出。运行时参数（超时、重试、并发、温度）由 `src/providers/runtime.ts` 解析成结构体，再由入口注入。
+最重要的边界是：`src/` 是可复用库代码，`cli.ts` 和 `serve.ts` 才负责读取 `.env`、打印日志、监听 HTTP、处理进程退出。环境变量类型解析在 `runtime/env.ts`，provider 运行参数（超时、重试、并发、温度）的默认值和校验在 `src/providers/runtime.ts`，最后由入口注入核心库。
 
 这个边界让库 API 可以被测试和外部调用，也避免核心逻辑依赖终端环境。
 
@@ -101,6 +103,24 @@ chat(messages)
 :::tip[排查 RAG 的第一原则]
 回答不对时，先分清是**召回问题**还是**生成问题**。召回问题表现为“命中片段里根本没有答案”，要去查切块、embedding、检索参数；生成问题表现为“片段里有答案但模型答错”，才去看 Prompt 和模型。这条原则会在后面多个章节反复出现。
 :::
+
+### candidates 与 hits
+
+真实源码里，查询结果会区分 `candidates` 和 `hits`：
+
+```text
+retriever.search()
+  -> candidates
+  -> selectDiverseHits()
+  -> hits
+  -> buildContext()
+```
+
+`candidates` 是检索器按融合分数排出的候选池。它回答“哪些片段和问题最相关”。`hits` 是经过 `TOP_K` 和 `PER_SOURCE_LIMIT` 之后真正进入 Prompt 的片段。它回答“最终让模型看到哪些证据”。
+
+这两个字段分开，是为了让排查更精确：如果正确片段在 `candidates` 里但没进 `hits`，优先看同源限制和 TopK；如果正确片段连 `candidates` 都没有进，才回到切块、embedding、关键词分数和向量库 meta。
+
+`query()` 还会返回 `embeddingElapsedMs`、`searchElapsedMs`、`retrievalElapsedMs` 和 `generationElapsedMs`。这些耗时不是装饰字段：embedding 慢说明模型服务或网络慢，search 慢可能是向量库加载/点积成本，generation 慢则是聊天模型输出成本。把耗时拆开，才能知道应该优化 provider、retriever 还是 LLM。
 
 ## 向量库结构
 

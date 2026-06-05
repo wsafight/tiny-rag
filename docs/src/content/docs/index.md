@@ -26,7 +26,7 @@ hero:
     - text: 开始学习
       link: /tiny-rag/overview/
       icon: right-arrow
-    - text: 架构全景
+    - text: 工作流与源码架构
       link: /tiny-rag/architecture/
       icon: open-book
       variant: secondary
@@ -46,6 +46,10 @@ hero:
   <a href="/tiny-rag/build-01-skeleton/">
     <strong>从零构建 mini-rag</strong>
     <span>B01-B10 一章一个里程碑，每章只引入一组关键概念，再写能运行的代码。</span>
+  </a>
+  <a href="/tiny-rag/diagnostics/">
+    <strong>诊断一次失败查询</strong>
+    <span>用 candidates、hits、score、meta 和耗时字段判断问题落在导入、召回还是生成。</span>
   </a>
   <a href="/tiny-rag/optimizations/">
     <strong>优化与扩展</strong>
@@ -75,8 +79,9 @@ hero:
 
 ## 快速入口
 
-1. [概览](/tiny-rag/overview/)：建立项目边界和源码地图。
-2. [架构全景](/tiny-rag/architecture/)：先看导入链路、查询链路和运行入口。
-3. [B01: 项目骨架与核心类型](/tiny-rag/build-01-skeleton/)：从零开始写 mini-rag。
+1. [RAG 项目概览](/tiny-rag/overview/)：建立项目边界和源码地图。
+2. [工作流与源码架构](/tiny-rag/architecture/)：先看导入链路、查询链路和运行入口。
+3. [诊断与解析方法](/tiny-rag/diagnostics/)：学会用中间结果判断 RAG 问题落在哪一层。
+4. [B01: 项目骨架与核心类型](/tiny-rag/build-01-skeleton/)：从零开始写 mini-rag。
 
 基于当前 `tiny-rag` 源码整理，把它作为理解 RAG 工作原理的示例项目。
