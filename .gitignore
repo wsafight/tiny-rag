@@ -10,3 +10,5 @@ dist/
 
 # bench: 历史结果入库便于追踪趋势；baseline 不入库避免覆盖冲突
 bench/baseline.json
+
+tmp/

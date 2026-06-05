@@ -205,7 +205,7 @@ mini-rag/
   main.ts        # 入口
 ```
 
-它和 tiny-rag 的主链路一致。接下来几章看 tiny-rag 在这条链路之上做了什么：三种入口（CLI / HTTP / 库 API）、配置调参，以及一系列**工程优化**——增量缓存、原子写入、内存索引复用等。
+它和 tiny-rag 的主链路一致。接下来几章看 tiny-rag 在这条链路之上做了什么：三种入口（CLI / HTTP / 库 API）、配置调参、诊断方法，以及一系列**工程优化**——增量缓存、原子写入、内存索引复用等。
 
 读完 B01 到 B10，可以把 RAG 看成两组纯转换：导入阶段从 `SourceDocument` 到 `VectorStoreRecord`，查询阶段从 question 到 `SearchHit` 再到 `ChatMessage`。后面的工程化章节不会改变这条主线，只会让它更易用、更快、更稳。
 
@@ -247,5 +247,5 @@ pnpm query -- "怎么取消订单？"
 :::
 
 :::note[接下来：从“能跑”到“能用”]
-mini-rag 跑通了，但每一步都是最朴素的实现。接下来三组章节带你看 tiny-rag 在同一条链路上补了什么工程：[三种入口（CLI / HTTP / 库 API）](/tiny-rag/interfaces/)、[配置与检索调参](/tiny-rag/config-tuning/)，以及[工程优化如何工作](/tiny-rag/optimizations/)（增量缓存、内存索引、原子写入等）。
+mini-rag 跑通了，但每一步都是最朴素的实现。接下来几组章节带你看 tiny-rag 在同一条链路上补了什么工程：[三种入口（CLI / HTTP / 库 API）](/tiny-rag/interfaces/)、[配置与检索调参](/tiny-rag/config-tuning/)、[诊断与解析方法](/tiny-rag/diagnostics/)，以及[工程优化如何工作](/tiny-rag/optimizations/)（增量缓存、内存索引、原子写入等）。
 :::
