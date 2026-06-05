@@ -67,6 +67,11 @@ export default defineConfig({
           label: '优化与扩展',
           items: [
             { label: '工程优化如何工作', slug: 'optimizations' },
+            { label: 'RAG 回归评测', slug: 'evaluation' },
+            { label: '接入向量数据库', slug: 'vector-database' },
+            { label: 'Reranker 重排', slug: 'reranker' },
+            { label: '文档解析与清洗', slug: 'document-parsing' },
+            { label: '权限与 RAG 安全', slug: 'security-permissions' },
             { label: '后续扩展路线', slug: 'roadmap' },
           ],
         },
